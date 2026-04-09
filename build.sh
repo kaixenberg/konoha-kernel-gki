@@ -13,10 +13,167 @@ DTB_DTBO_DIR="$ZIMAGE_DIR/dts/vendor/qcom"
 BUILD_START=$(date +"%s")
 
 # ==========================================
-# Global Configs
+# Interactive Config Setup
 # ==========================================
-DISABLE_CPU_MITIGATIONS=true
-ENABLE_AUTOFDO=true # Enable Google's AutoFDO for Android 15/16 (uses android/gki/aarch64/afdo/kernel.afdo)
+if [ -z "$OPTIMIZATION_PROFILE" ]; then
+    echo "=========================================="
+    echo "      Select Optimization Profile         "
+    echo "=========================================="
+    echo " 1) Default"
+    echo " 2) Performance (1000 HZ)"
+    echo " 3) Hardened (Security Features)"
+    echo " 4) Performance-Hardened (Both)"
+    read -p "Enter choice [1-4] (default 1): " OPTIMIZATION_PROFILE_CHOICE
+    OPTIMIZATION_PROFILE=${OPTIMIZATION_PROFILE_CHOICE:-1}
+fi
+
+if [ -z "$BUILD_VARIANT" ]; then
+    echo "=========================================="
+    echo "          Select Build Variant            "
+    echo "=========================================="
+    echo " 1) Non-Root (Stock)"
+    echo " 2) Root Only"
+    echo " 3) Root + SUSFS"
+    read -p "Enter choice [1-3] (default 1): " BUILD_VARIANT_CHOICE
+    BUILD_VARIANT=${BUILD_VARIANT_CHOICE:-1}
+fi
+
+if [ "$BUILD_VARIANT" == "2" ] || [ "$BUILD_VARIANT" == "3" ]; then
+    if [ -z "$ROOT_SOLUTION" ]; then
+        echo "=========================================="
+        echo "         Select Root Solution             "
+        echo "=========================================="
+        echo " 1) KernelSU-Next (KernelSU-Next)"
+        echo " 2) Sukisu (sukisu-ultra)"
+        echo " 3) ReSukiSU"
+        echo " 4) MamboSU (RapliVx/KernelSU)"
+        read -p "Enter choice [1-4] (default 1): " ROOT_SOLUTION_CHOICE
+        ROOT_SOLUTION=${ROOT_SOLUTION_CHOICE:-1}
+    fi
+
+    case "$ROOT_SOLUTION" in
+        2) ROOT_REPO="https://github.com/sukisu-ultra/sukisu-ultra.git"; REPO_NAME="sukisu-ultra"; BRANCH="main" ;;
+        3) ROOT_REPO="https://github.com/ReSukiSU/ReSukiSU.git"; REPO_NAME="ReSukiSU"; BRANCH="main" ;;
+        4) ROOT_REPO="https://github.com/RapliVx/KernelSU.git"; REPO_NAME="MamboSU"; BRANCH="master" ;;
+        *) ROOT_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"; REPO_NAME="KernelSU-Next"; BRANCH="dev" ;;
+    esac
+
+    if [ "$BUILD_VARIANT" == "3" ] && [ -z "$SUSFS_VERSION" ]; then
+        echo "=========================================="
+        echo "           Select SUSFS Version           "
+        echo "=========================================="
+        echo " 1) v2.1 (Latest)"
+        echo " 2) v2.0"
+        read -p "Enter choice [1-2] (default 1): " SUSFS_VERSION_CHOICE
+        SUSFS_VERSION=${SUSFS_VERSION_CHOICE:-1}
+    fi
+fi
+
+# Prepare drivers/kernelsu
+rm -rf "$KERNEL_DIR/drivers/kernelsu"
+if [ "$BUILD_VARIANT" == "1" ]; then
+    echo "[+] Setting up Non-Root environment..."
+    mkdir -p "$KERNEL_DIR/drivers/kernelsu"
+    touch "$KERNEL_DIR/drivers/kernelsu/Kconfig"
+    touch "$KERNEL_DIR/drivers/kernelsu/Makefile"
+else
+        # Clone or Update Repo inside the repository
+        MODULES_DIR="$KERNEL_DIR/.root_modules"
+        mkdir -p "$MODULES_DIR"
+        if [ ! -d "$MODULES_DIR/$REPO_NAME" ]; then
+            echo "[+] Cloning $REPO_NAME..."
+            git clone -b "$BRANCH" "$ROOT_REPO" "$MODULES_DIR/$REPO_NAME"
+        else
+            echo "[+] Updating $REPO_NAME..."
+            (cd "$MODULES_DIR/$REPO_NAME" && git reset --hard && git pull || true)
+        fi
+        
+        # Apply SUSFS patches to the module manager backend if Root + SUSFS
+        if [ "$BUILD_VARIANT" == "3" ]; then
+            SUSFS_DIR="$MODULES_DIR/susfs4ksu"
+            if [ ! -d "$SUSFS_DIR" ]; then
+                echo "[+] Cloning susfs4ksu..."
+                git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android15-6.6-dev "$SUSFS_DIR"
+            else
+                echo "[+] Updating susfs4ksu..."
+                (cd "$SUSFS_DIR" && git reset --hard && git pull || true)
+            fi
+            
+            # Detect Root Manager source layout (New layout has "kernel/core" folder)
+            if [ -d "$MODULES_DIR/$REPO_NAME/kernel/core" ]; then
+            	LAYOUT="NEW"
+            else
+            	LAYOUT="OLD"
+            fi
+
+            # Switch between v2.1 and v2.0 based on Layout Compatibility
+            if [ "$SUSFS_VERSION" == "2" ]; then
+                # Removed forced KernelSU fallback to test KernelSU-Next with SUSFS v2.0
+                LAYOUT="OLD"
+                
+                echo "[+] Switching SUSFS to v2.0 (Legacy Layout)..."
+                (cd "$SUSFS_DIR" && git reset --hard 4849a6b)
+            else
+                if [ "$LAYOUT" == "OLD" ]; then
+                    echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
+                    (cd "$SUSFS_DIR" && git reset --hard 89b1422)
+                else
+                    echo "[+] Switching SUSFS to v2.1 (Latest/Modern Layout)..."
+                    (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
+                fi
+            fi
+            
+            echo "[+] Injecting SUSFS kernel source files to local tree..."
+            cp "$SUSFS_DIR/kernel_patches/fs/susfs.c" "$KERNEL_DIR/fs/susfs.c"
+            cp "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" "$KERNEL_DIR/include/linux/susfs.h"
+            if [ -f "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" ]; then
+                cp "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" "$KERNEL_DIR/include/linux/susfs_def.h"
+                if [ "$SUSFS_VERSION" == "2" ]; then
+                    sed -i '$d' "$KERNEL_DIR/include/linux/susfs_def.h"
+                    cat << 'INNER_EOF' >> "$KERNEL_DIR/include/linux/susfs_def.h"
+#ifndef VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT
+#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x80000000
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561
+#endif
+#ifndef DATA_ADB_UMOUNT_FOR_ZYGOTE_SYSTEM_PROCESS
+#define DATA_ADB_UMOUNT_FOR_ZYGOTE_SYSTEM_PROCESS "/data/adb/susfs_umount_for_zygote_system_process"
+#endif
+#ifndef DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT
+#define DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT "/data/adb/susfs_no_auto_add_sus_bind_mount"
+#endif
+#ifndef DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+#define DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT "/data/adb/susfs_no_auto_add_sus_ksu_default_mount"
+#endif
+#ifndef DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+#define DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT "/data/adb/susfs_no_auto_add_try_umount_for_bind_mount"
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55561
+#endif
+#endif // #ifndef KSU_SUSFS_DEF_H
+INNER_EOF
+                fi
+            fi
+
+            echo "[+] Applying SUSFS Patches to $REPO_NAME backend..."
+            (cd "$MODULES_DIR/$REPO_NAME" && \
+             patch -p1 --forward -f --reject-file=- < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true)
+            
+            # Fix tracepoint undefined symbol issue (patch removes tp_marker.h but SukiSU uses it)
+            if grep -q "ksu_set_task_tracepoint_flag" "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c" 2>/dev/null; then
+                if ! grep -q "hook/tp_marker.h" "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c"; then
+                    echo "[+] Restoring tp_marker.h for app_profile.c..."
+                    sed -i 's/#include "infra\/su_mount_ns.h"/#include "infra\/su_mount_ns.h"\n#include "hook\/tp_marker.h"/' "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c"
+                fi
+            fi
+        fi
+
+        echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
+        ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
+    fi
+
 LTO_TYPE="full" # Options: "thin", "full", or "none" (thin is recommended with AutoFDO)
 
 # Function to check for existing Clang
@@ -108,6 +265,51 @@ mkdir -p "$OUT_DIR"
 
 # Create config
 make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="$KERNEL_KCFLAGS" LDFLAGS="$KERNEL_LDFLAGS" $KERNEL_DEFCONFIG || exit 1
+
+# Apply Root Configs
+echo "=========================================="
+echo "[+] Applying Root Configuration..."
+echo "=========================================="
+if [ "$BUILD_VARIANT" == "1" ]; then
+    scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS
+elif [ "$BUILD_VARIANT" == "2" ]; then
+    scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS
+elif [ "$BUILD_VARIANT" == "3" ]; then
+    scripts/config --file "$OUT_DIR/.config" \
+        -e CONFIG_KSU \
+        -e CONFIG_KSU_SUSFS \
+        -e CONFIG_KSU_SUSFS_SUS_MAP
+fi
+make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
+
+# Apply Optimization Profiles
+echo "=========================================="
+echo "[+] Applying Optimization Profile ($OPTIMIZATION_PROFILE)..."
+echo "=========================================="
+if [ "$OPTIMIZATION_PROFILE" == "2" ] || [ "$OPTIMIZATION_PROFILE" == "4" ]; then
+    # Performance Mode (1000 HZ)
+    scripts/config --file "$OUT_DIR/.config" \
+        -d CONFIG_HZ_300 \
+        -d CONFIG_HZ_250 \
+        -e CONFIG_HZ_1000 \
+        --set-val CONFIG_HZ 1000 \
+        -d CONFIG_RCU_LAZY
+fi
+
+if [ "$OPTIMIZATION_PROFILE" == "3" ] || [ "$OPTIMIZATION_PROFILE" == "4" ]; then
+    # Hardened Mode (Security & Mitigations)
+    scripts/config --file "$OUT_DIR/.config" \
+        -e CONFIG_SECURITY_DMESG_RESTRICT \
+        -e CONFIG_HARDENED_USERCOPY \
+        -e CONFIG_FORTIFY_SOURCE \
+        -e CONFIG_RANDOMIZE_BASE \
+        -e CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT \
+        -e CONFIG_SLAB_FREELIST_RANDOM \
+        -e CONFIG_SLAB_FREELIST_HARDENED \
+        -e CONFIG_BUG_ON_DATA_CORRUPTION
+fi
+
+make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
 
 # Apply Global Configs
 if [ "$DISABLE_CPU_MITIGATIONS" = "true" ]; then
@@ -230,7 +432,27 @@ fi
 
 # Create zip file in kernel root directory
 echo "Creating zip package..."
-ZIP_NAME="Kono-Ha-$TIME.zip"
+ZIP_SUFFIX=""
+if [ "$BUILD_VARIANT" == "2" ]; then
+    ZIP_SUFFIX="-$REPO_NAME"
+elif [ "$BUILD_VARIANT" == "3" ]; then
+    if [ "$SUSFS_VERSION" == "2" ]; then
+        ZIP_SUFFIX="-$REPO_NAME-susfs-v2.0"
+    else
+        ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
+    fi
+fi
+
+PROFILE_SUFFIX=""
+if [ "$OPTIMIZATION_PROFILE" == "2" ]; then
+    PROFILE_SUFFIX="-perf"
+elif [ "$OPTIMIZATION_PROFILE" == "3" ]; then
+    PROFILE_SUFFIX="-hardened"
+elif [ "$OPTIMIZATION_PROFILE" == "4" ]; then
+    PROFILE_SUFFIX="-perf-hardened"
+fi
+
+ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${PROFILE_SUFFIX}-$TIME.zip"
 cd "$TEMP_ANY_KERNEL_DIR"
 zip -r9 "$KERNEL_DIR/$ZIP_NAME" ./*
 cd ..

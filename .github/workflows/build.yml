@@ -1,0 +1,140 @@
+name: Build Kernel CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-kernel:
+    name: Build ${{ matrix.setup.name }}${{ matrix.profile.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        profile: 
+          - { id: '1', name: '' }
+          - { id: '2', name: '-performance' }
+          - { id: '3', name: '-hardened' }
+          - { id: '4', name: '-perf-hardened' }
+        setup:
+          # Non-Root (Hanya perlu 1 job)
+          - variant: '1'
+            solution: '1'
+            name: "Non-Root"
+          
+          # Root Only (Semua 4 Packages)
+          - variant: '2'
+            solution: '1'
+            name: "KernelSU-Next"
+          - variant: '2'
+            solution: '2'
+            name: "Sukisu"
+          - variant: '2'
+            solution: '3'
+            name: "ReSukiSU"
+          - variant: '2'
+            solution: '4'
+            name: "MamboSU"
+
+          # Root + SUSFS v2.1
+          - variant: '3'
+            solution: '1'
+            name: "SUSFS-v2.1-KernelSU-Next"
+            susfs_ver: '1'
+          - variant: '3'
+            solution: '2'
+            name: "SUSFS-v2.1-Sukisu"
+            susfs_ver: '1'
+          - variant: '3'
+            solution: '3'
+            name: "SUSFS-v2.1-ReSukiSU"
+            susfs_ver: '1'
+          - variant: '3'
+            solution: '4'
+            name: "SUSFS-v2.1-MamboSU"
+            susfs_ver: '1'
+
+          # Root + SUSFS v2.0
+          - variant: '3'
+            solution: '1'
+            name: "SUSFS-v2.0-KernelSU-Next"
+            susfs_ver: '2'
+          - variant: '3'
+            solution: '2'
+            name: "SUSFS-v2.0-Sukisu"
+            susfs_ver: '2'
+          - variant: '3'
+            solution: '3'
+            name: "SUSFS-v2.0-ReSukiSU"
+            susfs_ver: '2'
+          - variant: '3'
+            solution: '4'
+            name: "SUSFS-v2.0-MamboSU"
+            susfs_ver: '2'
+            
+    steps:
+      - name: Create Swap Space for Heavy Linking
+        run: |
+          SWAPFILE="/mnt/build_swapfile"
+          while true; do
+            if sudo fallocate -l 10G $SWAPFILE || sudo dd if=/dev/zero of=$SWAPFILE bs=1M count=10240 status=progress; then
+              break
+            else
+              echo "[-] Target swapfile busy or failed to allocate. Waiting 5 seconds before retrying..."
+              sleep 5
+            fi
+          done
+          sudo chmod 600 $SWAPFILE
+          sudo mkswap $SWAPFILE
+          sudo swapon $SWAPFILE
+          sudo swapon --show
+
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          path: gki-clo
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm jq
+      
+      - name: Download Clang Toolchain
+        run: |
+          mkdir -p toolchains
+          echo "Cloning AOSP Clang Toolchain..."
+          git clone --depth=1 https://github.com/ZyCromerZ/Clang.git -b main toolchains/clang
+
+      - name: Setup AnyKernel3
+        run: |
+          cd gki-clo
+          if [ ! -d "anykernel" ]; then
+             echo "Cloning AnyKernel3..."
+             git clone https://github.com/osm0sis/AnyKernel3.git anykernel
+          fi
+
+      - name: Build the Kernel
+        env:
+          BUILD_VARIANT: ${{ matrix.setup.variant }}
+          ROOT_SOLUTION: ${{ matrix.setup.solution }}
+          OPTIMIZATION_PROFILE: ${{ matrix.profile.id }}
+          SUSFS_VERSION: ${{ matrix.setup.susfs_ver || '1' }}
+        run: |
+          cd gki-clo
+          chmod +x build.sh
+          
+          # Force export environment variables untuk diproses build.sh
+          export BUILD_VARIANT
+          export ROOT_SOLUTION
+          export OPTIMIZATION_PROFILE
+          export SUSFS_VERSION
+          
+          ./build.sh
+
+      - name: Upload Compiled ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kono-Ha-${{ matrix.setup.name }}${{ matrix.profile.name }}
+          path: gki-clo/Kono-Ha-*.zip
+          retention-days: 7
