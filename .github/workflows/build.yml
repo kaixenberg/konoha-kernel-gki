@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-kernel:
     name: Build ${{ matrix.setup.name }}${{ matrix.profile.name }}
@@ -136,5 +139,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Kono-Ha-${{ matrix.setup.name }}${{ matrix.profile.name }}
-          path: gki-clo/Kono-Ha-*.zip
+          path: gki-clo/Kono-Ha-Release
           retention-days: 7

@@ -403,9 +403,10 @@ make "${MAKE_ARGS[@]}" || {
     exit 1
 }
 
-# Clean up old kernel zip files
-echo "Cleaning up old kernel zip files..."
+# Clean up old kernel output files
+echo "Cleaning up old kernel files..."
 find "$KERNEL_DIR" -maxdepth 1 -type f -name "Kono-Ha-*.zip" -exec rm -v {} \;
+rm -rf "$KERNEL_DIR/Kono-Ha-Release"
 
 # Create temporary anykernel directory
 TIME=$(date "+%Y%m%d-%H%M%S")
@@ -454,19 +455,14 @@ fi
 
 ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${PROFILE_SUFFIX}-$TIME.zip"
 cd "$TEMP_ANY_KERNEL_DIR"
-zip -r9 "$KERNEL_DIR/$ZIP_NAME" ./*
+# Do not zip inside the script, leave the folder ready for GitHub Actions' upload-artifact
 cd ..
-
-# Clean up temporary directory
-rm -rf "$TEMP_ANY_KERNEL_DIR"
+mv "$TEMP_ANY_KERNEL_DIR" "$KERNEL_DIR/Kono-Ha-Release"
 
 BUILD_END=$(date +"%s")
 DIFF=$((BUILD_END - BUILD_START))
 
-ZIP_SIZE=$(du -h "$KERNEL_DIR/$ZIP_NAME" | awk '{print $1}')
-
 echo -e "\n=========================================="
 echo "Build completed in $((DIFF / 60))m $((DIFF % 60))s"
-echo "Final zip: $KERNEL_DIR/$ZIP_NAME"
-echo "Zip size: $ZIP_SIZE"
+echo "Output folder ready: $KERNEL_DIR/Kono-Ha-Release"
 echo "=========================================="
