@@ -16,10 +16,9 @@ jobs:
     strategy:
       matrix:
         profile: 
-          - { id: '1', name: '' }
+          - { id: '1', name: '-balance' }
           - { id: '2', name: '-performance' }
-          - { id: '3', name: '-hardened' }
-          - { id: '4', name: '-perf-hardened' }
+          - { id: '3', name: '-battery' }
         setup:
           # Non-Root (Hanya perlu 1 job)
           - variant: '1'
@@ -40,41 +39,23 @@ jobs:
             solution: '4'
             name: "MamboSU"
 
-          # Root + SUSFS v2.1
+          # Root + SUSFS
           - variant: '3'
             solution: '1'
-            name: "SUSFS-v2.1-KernelSU-Next"
-            susfs_ver: '1'
-          - variant: '3'
-            solution: '2'
-            name: "SUSFS-v2.1-Sukisu"
-            susfs_ver: '1'
-          - variant: '3'
-            solution: '3'
-            name: "SUSFS-v2.1-ReSukiSU"
-            susfs_ver: '1'
-          - variant: '3'
-            solution: '4'
-            name: "SUSFS-v2.1-MamboSU"
-            susfs_ver: '1'
+            name: "SUSFS-KernelSU-Next"
 
-          # Root + SUSFS v2.0
-          - variant: '3'
-            solution: '1'
-            name: "SUSFS-v2.0-KernelSU-Next"
-            susfs_ver: '2'
           - variant: '3'
             solution: '2'
-            name: "SUSFS-v2.0-Sukisu"
-            susfs_ver: '2'
+            name: "SUSFS-Sukisu"
+
           - variant: '3'
             solution: '3'
-            name: "SUSFS-v2.0-ReSukiSU"
-            susfs_ver: '2'
+            name: "SUSFS-ReSukiSU"
+
           - variant: '3'
             solution: '4'
-            name: "SUSFS-v2.0-MamboSU"
-            susfs_ver: '2'
+            name: "SUSFS-MamboSU"
+
             
     steps:
       - name: Create Swap Space for Heavy Linking
@@ -122,7 +103,6 @@ jobs:
           BUILD_VARIANT: ${{ matrix.setup.variant }}
           ROOT_SOLUTION: ${{ matrix.setup.solution }}
           OPTIMIZATION_PROFILE: ${{ matrix.profile.id }}
-          SUSFS_VERSION: ${{ matrix.setup.susfs_ver || '1' }}
         run: |
           cd gki-clo
           chmod +x build.sh
@@ -131,7 +111,6 @@ jobs:
           export BUILD_VARIANT
           export ROOT_SOLUTION
           export OPTIMIZATION_PROFILE
-          export SUSFS_VERSION
           
           ./build.sh
 

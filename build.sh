@@ -19,11 +19,10 @@ if [ -z "$OPTIMIZATION_PROFILE" ]; then
     echo "=========================================="
     echo "      Select Optimization Profile         "
     echo "=========================================="
-    echo " 1) Default"
+    echo " 1) Balance (250 HZ)"
     echo " 2) Performance (1000 HZ)"
-    echo " 3) Hardened (Security Features)"
-    echo " 4) Performance-Hardened (Both)"
-    read -p "Enter choice [1-4] (default 1): " OPTIMIZATION_PROFILE_CHOICE
+    echo " 3) Battery (100 HZ)"
+    read -p "Enter choice [1-3] (default 1): " OPTIMIZATION_PROFILE_CHOICE
     OPTIMIZATION_PROFILE=${OPTIMIZATION_PROFILE_CHOICE:-1}
 fi
 
@@ -58,15 +57,6 @@ if [ "$BUILD_VARIANT" == "2" ] || [ "$BUILD_VARIANT" == "3" ]; then
         *) ROOT_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"; REPO_NAME="KernelSU-Next"; BRANCH="dev" ;;
     esac
 
-    if [ "$BUILD_VARIANT" == "3" ] && [ -z "$SUSFS_VERSION" ]; then
-        echo "=========================================="
-        echo "           Select SUSFS Version           "
-        echo "=========================================="
-        echo " 1) v2.1 (Latest)"
-        echo " 2) v2.0"
-        read -p "Enter choice [1-2] (default 1): " SUSFS_VERSION_CHOICE
-        SUSFS_VERSION=${SUSFS_VERSION_CHOICE:-1}
-    fi
 fi
 
 # Prepare drivers/kernelsu
@@ -107,20 +97,12 @@ else
             fi
 
             # Switch between v2.1 and v2.0 based on Layout Compatibility
-            if [ "$SUSFS_VERSION" == "2" ]; then
-                # Removed forced KernelSU fallback to test KernelSU-Next with SUSFS v2.0
-                LAYOUT="OLD"
-                
-                echo "[+] Switching SUSFS to v2.0 (Legacy Layout)..."
-                (cd "$SUSFS_DIR" && git reset --hard 4849a6b)
+            if [ "$LAYOUT" == "OLD" ]; then
+                echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
+                (cd "$SUSFS_DIR" && git reset --hard 89b1422)
             else
-                if [ "$LAYOUT" == "OLD" ]; then
-                    echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
-                    (cd "$SUSFS_DIR" && git reset --hard 89b1422)
-                else
-                    echo "[+] Switching SUSFS to v2.1 (Latest/Modern Layout)..."
-                    (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
-                fi
+                echo "[+] Switching SUSFS to v2.1 (Latest/Modern Layout)..."
+                (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
             fi
             
             echo "[+] Injecting SUSFS kernel source files to local tree..."
@@ -128,33 +110,7 @@ else
             cp "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" "$KERNEL_DIR/include/linux/susfs.h"
             if [ -f "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" ]; then
                 cp "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" "$KERNEL_DIR/include/linux/susfs_def.h"
-                if [ "$SUSFS_VERSION" == "2" ]; then
-                    sed -i '$d' "$KERNEL_DIR/include/linux/susfs_def.h"
-                    cat << 'INNER_EOF' >> "$KERNEL_DIR/include/linux/susfs_def.h"
-#ifndef VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT
-#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x80000000
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561
-#endif
-#ifndef DATA_ADB_UMOUNT_FOR_ZYGOTE_SYSTEM_PROCESS
-#define DATA_ADB_UMOUNT_FOR_ZYGOTE_SYSTEM_PROCESS "/data/adb/susfs_umount_for_zygote_system_process"
-#endif
-#ifndef DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT
-#define DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT "/data/adb/susfs_no_auto_add_sus_bind_mount"
-#endif
-#ifndef DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-#define DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT "/data/adb/susfs_no_auto_add_sus_ksu_default_mount"
-#endif
-#ifndef DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-#define DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT "/data/adb/susfs_no_auto_add_try_umount_for_bind_mount"
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55561
-#endif
-#endif // #ifndef KSU_SUSFS_DEF_H
-INNER_EOF
-                fi
+
             fi
 
             echo "[+] Applying SUSFS Patches to $REPO_NAME backend..."
@@ -271,11 +227,11 @@ echo "=========================================="
 echo "[+] Applying Root Configuration..."
 echo "=========================================="
 if [ "$BUILD_VARIANT" == "1" ]; then
-    scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS
+    sscripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS
 elif [ "$BUILD_VARIANT" == "2" ]; then
-    scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS
+    sscripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS
 elif [ "$BUILD_VARIANT" == "3" ]; then
-    scripts/config --file "$OUT_DIR/.config" \
+    sscripts/config --file "$OUT_DIR/.config" \
         -e CONFIG_KSU \
         -e CONFIG_KSU_SUSFS \
         -e CONFIG_KSU_SUSFS_SUS_MAP
@@ -286,27 +242,15 @@ make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
 echo "=========================================="
 echo "[+] Applying Optimization Profile ($OPTIMIZATION_PROFILE)..."
 echo "=========================================="
-if [ "$OPTIMIZATION_PROFILE" == "2" ] || [ "$OPTIMIZATION_PROFILE" == "4" ]; then
+if [ "$OPTIMIZATION_PROFILE" == "1" ]; then
+    # Balance Mode (250 HZ) - Default for Android
+    scripts/config --file "$OUT_DIR/.config"         -d CONFIG_HZ_300         -d CONFIG_HZ_1000         -d CONFIG_HZ_100         -e CONFIG_HZ_250         --set-val CONFIG_HZ 250
+elif [ "$OPTIMIZATION_PROFILE" == "2" ]; then
     # Performance Mode (1000 HZ)
-    scripts/config --file "$OUT_DIR/.config" \
-        -d CONFIG_HZ_300 \
-        -d CONFIG_HZ_250 \
-        -e CONFIG_HZ_1000 \
-        --set-val CONFIG_HZ 1000 \
-        -d CONFIG_RCU_LAZY
-fi
-
-if [ "$OPTIMIZATION_PROFILE" == "3" ] || [ "$OPTIMIZATION_PROFILE" == "4" ]; then
-    # Hardened Mode (Security & Mitigations)
-    scripts/config --file "$OUT_DIR/.config" \
-        -e CONFIG_SECURITY_DMESG_RESTRICT \
-        -e CONFIG_HARDENED_USERCOPY \
-        -e CONFIG_FORTIFY_SOURCE \
-        -e CONFIG_RANDOMIZE_BASE \
-        -e CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT \
-        -e CONFIG_SLAB_FREELIST_RANDOM \
-        -e CONFIG_SLAB_FREELIST_HARDENED \
-        -e CONFIG_BUG_ON_DATA_CORRUPTION
+    sscripts/config --file "$OUT_DIR/.config"         -d CONFIG_HZ_300         -d CONFIG_HZ_250         -d CONFIG_HZ_100         -e CONFIG_HZ_1000         --set-val CONFIG_HZ 1000         -d CONFIG_RCU_LAZY
+elif [ "$OPTIMIZATION_PROFILE" == "3" ]; then
+    # Battery Mode (100 HZ)
+    sscripts/config --file "$OUT_DIR/.config"         -d CONFIG_HZ_300         -d CONFIG_HZ_250         -d CONFIG_HZ_1000         -e CONFIG_HZ_100         --set-val CONFIG_HZ 100         -e CONFIG_RCU_LAZY
 fi
 
 make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
@@ -316,7 +260,7 @@ if [ "$DISABLE_CPU_MITIGATIONS" = "true" ]; then
     echo "=========================================="
     echo "[+] Disabling CPU & Spectre Mitigations..."
     echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
+    sscripts/config --file "$OUT_DIR/.config" \
         -d CONFIG_CPU_MITIGATIONS \
         -d CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
 
@@ -329,7 +273,7 @@ if [ "$LTO_TYPE" = "full" ]; then
     echo "=========================================="
     echo "[+] Setting LTO Type to FULL..."
     echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
+    sscripts/config --file "$OUT_DIR/.config" \
         -d CONFIG_LTO_NONE \
         -d CONFIG_LTO_CLANG_THIN \
         -e CONFIG_LTO_CLANG \
@@ -339,7 +283,7 @@ elif [ "$LTO_TYPE" = "thin" ]; then
     echo "=========================================="
     echo "[+] Setting LTO Type to THIN..."
     echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
+    sscripts/config --file "$OUT_DIR/.config" \
         -d CONFIG_LTO_NONE \
         -d CONFIG_LTO_CLANG_FULL \
         -e CONFIG_LTO_CLANG \
@@ -349,7 +293,7 @@ elif [ "$LTO_TYPE" = "none" ]; then
     echo "=========================================="
     echo "[+] Disabling LTO..."
     echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
+    sscripts/config --file "$OUT_DIR/.config" \
         -d CONFIG_LTO_CLANG \
         -d CONFIG_LTO_CLANG_FULL \
         -d CONFIG_LTO_CLANG_THIN \
@@ -362,7 +306,7 @@ if [ "$ENABLE_AUTOFDO" = "true" ]; then
     echo "=========================================="
     echo "[+] Enabling AutoFDO for Android 15/16..."
     echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
+    sscripts/config --file "$OUT_DIR/.config" \
         -e CONFIG_AUTOFDO_CLANG
     make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
     
@@ -437,20 +381,16 @@ ZIP_SUFFIX=""
 if [ "$BUILD_VARIANT" == "2" ]; then
     ZIP_SUFFIX="-$REPO_NAME"
 elif [ "$BUILD_VARIANT" == "3" ]; then
-    if [ "$SUSFS_VERSION" == "2" ]; then
-        ZIP_SUFFIX="-$REPO_NAME-susfs-v2.0"
-    else
-        ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
-    fi
+    ZIP_SUFFIX="-$REPO_NAME-susfs"
 fi
 
 PROFILE_SUFFIX=""
-if [ "$OPTIMIZATION_PROFILE" == "2" ]; then
+if [ "$OPTIMIZATION_PROFILE" == "1" ]; then
+    PROFILE_SUFFIX="-balance"
+elif [ "$OPTIMIZATION_PROFILE" == "2" ]; then
     PROFILE_SUFFIX="-perf"
 elif [ "$OPTIMIZATION_PROFILE" == "3" ]; then
-    PROFILE_SUFFIX="-hardened"
-elif [ "$OPTIMIZATION_PROFILE" == "4" ]; then
-    PROFILE_SUFFIX="-perf-hardened"
+    PROFILE_SUFFIX="-battery"
 fi
 
 ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${PROFILE_SUFFIX}-$TIME.zip"
