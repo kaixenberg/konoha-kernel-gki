@@ -57,16 +57,6 @@ if [ "$BUILD_VARIANT" == "2" ] || [ "$BUILD_VARIANT" == "3" ]; then
         4) ROOT_REPO="https://github.com/RapliVx/KernelSU.git"; REPO_NAME="MamboSU"; BRANCH="master" ;;
         *) ROOT_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"; REPO_NAME="KernelSU-Next"; BRANCH="dev" ;;
     esac
-
-    if [ "$BUILD_VARIANT" == "3" ] && [ -z "$SUSFS_VERSION" ]; then
-        echo "=========================================="
-        echo "           Select SUSFS Version           "
-        echo "=========================================="
-        echo " 1) v2.1 (Latest)"
-        echo " 2) v2.0"
-        read -p "Enter choice [1-2] (default 1): " SUSFS_VERSION_CHOICE
-        SUSFS_VERSION=${SUSFS_VERSION_CHOICE:-1}
-    fi
 fi
 
 # Prepare drivers/kernelsu
@@ -106,21 +96,13 @@ else
             	LAYOUT="OLD"
             fi
 
-            # Switch between v2.1 and v2.0 based on Layout Compatibility
-            if [ "$SUSFS_VERSION" == "2" ]; then
-                # Removed forced KernelSU fallback to test KernelSU-Next with SUSFS v2.0
-                LAYOUT="OLD"
-                
-                echo "[+] Switching SUSFS to v2.0 (Legacy Layout)..."
-                (cd "$SUSFS_DIR" && git reset --hard 4849a6b)
+            # Switch to v2.1 based on Layout Compatibility
+            if [ "$LAYOUT" == "OLD" ]; then
+                echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
+                (cd "$SUSFS_DIR" && git reset --hard 89b1422)
             else
-                if [ "$LAYOUT" == "OLD" ]; then
-                    echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
-                    (cd "$SUSFS_DIR" && git reset --hard 89b1422)
-                else
-                    echo "[+] Switching SUSFS to v2.1 (Latest/Modern Layout)..."
-                    (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
-                fi
+                echo "[+] Switching SUSFS to v2.1 (Latest/Modern Layout)..."
+                (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
             fi
             
             echo "[+] Injecting SUSFS kernel source files to local tree..."
@@ -128,53 +110,27 @@ else
             cp "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" "$KERNEL_DIR/include/linux/susfs.h"
             if [ -f "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" ]; then
                 cp "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" "$KERNEL_DIR/include/linux/susfs_def.h"
-                if [ "$SUSFS_VERSION" == "2" ]; then
-                    sed -i '$d' "$KERNEL_DIR/include/linux/susfs_def.h"
-                    cat << 'INNER_EOF' >> "$KERNEL_DIR/include/linux/susfs_def.h"
-#ifndef VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT
-#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x80000000
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561
-#endif
-#ifndef DATA_ADB_UMOUNT_FOR_ZYGOTE_SYSTEM_PROCESS
-#define DATA_ADB_UMOUNT_FOR_ZYGOTE_SYSTEM_PROCESS "/data/adb/susfs_umount_for_zygote_system_process"
-#endif
-#ifndef DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT
-#define DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT "/data/adb/susfs_no_auto_add_sus_bind_mount"
-#endif
-#ifndef DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-#define DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT "/data/adb/susfs_no_auto_add_sus_ksu_default_mount"
-#endif
-#ifndef DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-#define DATA_ADB_NO_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT "/data/adb/susfs_no_auto_add_try_umount_for_bind_mount"
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55561
-#endif
-#endif // #ifndef KSU_SUSFS_DEF_H
-INNER_EOF
-                fi
             fi
 
             echo "[+] Applying SUSFS Patches to $REPO_NAME backend..."
             (cd "$MODULES_DIR/$REPO_NAME" && \
              patch -p1 --forward -f --reject-file=- < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true)
             
-            # Fix tracepoint undefined symbol issue (patch removes tp_marker.h but SukiSU uses it)
-            if grep -q "ksu_set_task_tracepoint_flag" "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c" 2>/dev/null; then
-                if ! grep -q "hook/tp_marker.h" "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c"; then
-                    echo "[+] Restoring tp_marker.h for app_profile.c..."
-                    sed -i 's/#include "infra\/su_mount_ns.h"/#include "infra\/su_mount_ns.h"\n#include "hook\/tp_marker.h"/' "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c"
-                fi
-            fi
+            # ============================================================
+            # Apply comprehensive SUSFS v2.1 compatibility fixups
+            # The upstream SUSFS patch targets official KernelSU, not
+            # KernelSU-Next v3.1.0. Run the fixup script to manually
+            # apply all failed hunks adapted for this codebase.
+            # ============================================================
+            echo "[+] Running SUSFS compatibility fixup for KernelSU-Next..."
+            bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel"
         fi
 
         echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
         ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
     fi
 
-LTO_TYPE="full" # Options: "thin", "full", or "none" (thin is recommended with AutoFDO)
+LTO_TYPE="thin" # Options: "thin", "full", or "none" (thin is recommended with AutoFDO)
 
 # Function to check for existing Clang
 check_clang() {
@@ -437,11 +393,7 @@ ZIP_SUFFIX=""
 if [ "$BUILD_VARIANT" == "2" ]; then
     ZIP_SUFFIX="-$REPO_NAME"
 elif [ "$BUILD_VARIANT" == "3" ]; then
-    if [ "$SUSFS_VERSION" == "2" ]; then
-        ZIP_SUFFIX="-$REPO_NAME-susfs-v2.0"
-    else
-        ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
-    fi
+    ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
 fi
 
 PROFILE_SUFFIX=""
@@ -455,14 +407,21 @@ fi
 
 ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${PROFILE_SUFFIX}-$TIME.zip"
 cd "$TEMP_ANY_KERNEL_DIR"
-# Do not zip inside the script, leave the folder ready for GitHub Actions' upload-artifact
+# Create zip without top-level folder so it doesn't double-wrap
+zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder > /dev/null
 cd ..
-mv "$TEMP_ANY_KERNEL_DIR" "$KERNEL_DIR/Kono-Ha-Release"
+rm -rf "$TEMP_ANY_KERNEL_DIR"
+
+# Set useful variables for GitHub Actions
+if [ "$GITHUB_ACTIONS" == "true" ]; then
+    echo "ZIP_PATH=$KERNEL_DIR/$ZIP_NAME" >> "$GITHUB_ENV"
+    echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+fi
 
 BUILD_END=$(date +"%s")
 DIFF=$((BUILD_END - BUILD_START))
 
 echo -e "\n=========================================="
 echo "Build completed in $((DIFF / 60))m $((DIFF % 60))s"
-echo "Output folder ready: $KERNEL_DIR/Kono-Ha-Release"
+echo "Output ready: $KERNEL_DIR/$ZIP_NAME"
 echo "=========================================="
