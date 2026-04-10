@@ -96,7 +96,7 @@ else
             	LAYOUT="OLD"
             fi
 
-            # Switch between v2.1 and v2.0 based on Layout Compatibility
+            # Switch to v2.1 based on Layout Compatibility
             if [ "$LAYOUT" == "OLD" ]; then
                 echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
                 (cd "$SUSFS_DIR" && git reset --hard 89b1422)
@@ -117,20 +117,21 @@ else
             (cd "$MODULES_DIR/$REPO_NAME" && \
              patch -p1 --forward -f --reject-file=- < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true)
             
-            # Fix tracepoint undefined symbol issue (patch removes tp_marker.h but SukiSU uses it)
-            if grep -q "ksu_set_task_tracepoint_flag" "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c" 2>/dev/null; then
-                if ! grep -q "hook/tp_marker.h" "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c"; then
-                    echo "[+] Restoring tp_marker.h for app_profile.c..."
-                    sed -i 's/#include "infra\/su_mount_ns.h"/#include "infra\/su_mount_ns.h"\n#include "hook\/tp_marker.h"/' "$MODULES_DIR/$REPO_NAME/kernel/policy/app_profile.c"
-                fi
-            fi
+            # ============================================================
+            # Apply comprehensive SUSFS v2.1 compatibility fixups
+            # The upstream SUSFS patch targets official KernelSU, not
+            # KernelSU-Next v3.1.0. Run the fixup script to manually
+            # apply all failed hunks adapted for this codebase.
+            # ============================================================
+            echo "[+] Running SUSFS compatibility fixup for KernelSU-Next..."
+            bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel"
         fi
 
         echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
         ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
     fi
 
-LTO_TYPE="full" # Options: "thin", "full", or "none" (thin is recommended with AutoFDO)
+LTO_TYPE="thin" # Options: "thin", "full", or "none" (thin is recommended with AutoFDO)
 
 # Function to check for existing Clang
 check_clang() {
@@ -381,7 +382,7 @@ ZIP_SUFFIX=""
 if [ "$BUILD_VARIANT" == "2" ]; then
     ZIP_SUFFIX="-$REPO_NAME"
 elif [ "$BUILD_VARIANT" == "3" ]; then
-    ZIP_SUFFIX="-$REPO_NAME-susfs"
+    ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
 fi
 
 PROFILE_SUFFIX=""
@@ -395,14 +396,21 @@ fi
 
 ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${PROFILE_SUFFIX}-$TIME.zip"
 cd "$TEMP_ANY_KERNEL_DIR"
-# Do not zip inside the script, leave the folder ready for GitHub Actions' upload-artifact
+# Create zip without top-level folder so it doesn't double-wrap
+zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder > /dev/null
 cd ..
-mv "$TEMP_ANY_KERNEL_DIR" "$KERNEL_DIR/Kono-Ha-Release"
+rm -rf "$TEMP_ANY_KERNEL_DIR"
+
+# Set useful variables for GitHub Actions
+if [ "$GITHUB_ACTIONS" == "true" ]; then
+    echo "ZIP_PATH=$KERNEL_DIR/$ZIP_NAME" >> "$GITHUB_ENV"
+    echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+fi
 
 BUILD_END=$(date +"%s")
 DIFF=$((BUILD_END - BUILD_START))
 
 echo -e "\n=========================================="
 echo "Build completed in $((DIFF / 60))m $((DIFF % 60))s"
-echo "Output folder ready: $KERNEL_DIR/Kono-Ha-Release"
+echo "Output ready: $KERNEL_DIR/$ZIP_NAME"
 echo "=========================================="
