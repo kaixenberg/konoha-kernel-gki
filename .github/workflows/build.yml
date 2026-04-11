@@ -15,25 +15,8 @@ jobs:
     strategy:
       matrix:
         hz: [100, 250, 1000]
-        include_base:
-          - variant: stock
-            root: ksu-next
-          - variant: root
-            root: ksu-next
-          - variant: root
-            root: sukisu
-          - variant: root
-            root: resukisu
-          - variant: root
-            root: mambosu
-          - variant: susfs
-            root: ksu-next
-          - variant: susfs
-            root: sukisu
-          - variant: susfs
-            root: resukisu
-          - variant: susfs
-            root: mambosu
+        variant: [stock, root, susfs]
+        root: [ksu-next, sukisu, resukisu, mambosu]
         exclude:
           # Stock doesn't need root solution variants
           - variant: stock
