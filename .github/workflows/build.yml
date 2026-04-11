@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-kernel:
-    name: "${{ matrix.variant }}-${{ matrix.root }}-${{ matrix.hz.name }}"
+    name: "${{ matrix.variant == 'stock' && format('{0}-{1}', matrix.variant, matrix.hz.name) || format('{0}-{1}-{2}', matrix.variant, matrix.root, matrix.hz.name) }}"
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -19,15 +19,20 @@ jobs:
           - { id: 250, name: balance }
           - { id: 1000, name: performance }
         variant: [stock, root, susfs]
-        root: [ksu-next, sukisu, resukisu, mambosu]
+        root: [none, ksu-next, sukisu, resukisu, mambosu]
         exclude:
-          # Stock doesn't need root solution variants
+          - variant: stock
+            root: ksu-next
           - variant: stock
             root: sukisu
           - variant: stock
             root: resukisu
           - variant: stock
             root: mambosu
+          - variant: root
+            root: none
+          - variant: susfs
+            root: none
       fail-fast: false
 
     steps:
@@ -75,6 +80,6 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kono-Ha-${{ matrix.variant }}-${{ matrix.root }}-${{ matrix.hz.name }}
+          name: Kono-Ha-${{ matrix.variant == 'stock' && format('{0}-{1}', matrix.variant, matrix.hz.name) || format('{0}-{1}-{2}', matrix.variant, matrix.root, matrix.hz.name) }}
           path: gki-clo/Kono-Ha-Release
           retention-days: 7
