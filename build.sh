@@ -321,8 +321,8 @@ fi
 echo "=========================================="
 echo "[+] Applying debug reduction configs..."
 echo "=========================================="
-scripts/config --file "$OUT_DIR/.config" \
-    -e CONFIG_DEBUG_INFO_REDUCED \
+DEBUG_REDUCTION_ARGS=(
+    -e CONFIG_DEBUG_INFO_REDUCED
     -d CONFIG_DEBUG_MISC
     # -d CONFIG_UBSAN -d CONFIG_UBSAN_BOUNDS -d CONFIG_UBSAN_ARRAY_BOUNDS -d CONFIG_UBSAN_LOCAL_BOUNDS -d CONFIG_UBSAN_SANITIZE_ALL -d CONFIG_UBSAN_TRAP
     # -d CONFIG_SCHEDSTATS
@@ -332,6 +332,8 @@ scripts/config --file "$OUT_DIR/.config" \
     # -d CONFIG_RCU_TRACE
     # -d CONFIG_PROFILING
     # -d CONFIG_PRINTK_CALLER
+)
+scripts/config --file "$OUT_DIR/.config" "${DEBUG_REDUCTION_ARGS[@]}"
 
 # KASAN runtime disable (can't compile out — ABI symbol kasan_flag_enabled)
 CURRENT_CMDLINE=$(grep '^CONFIG_CMDLINE=' "$OUT_DIR/.config" | sed 's/^CONFIG_CMDLINE="//' | sed 's/"$//')
