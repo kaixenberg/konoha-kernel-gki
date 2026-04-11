@@ -145,10 +145,13 @@ KUMOUNT_C="$KSU_KERNEL/feature/kernel_umount.c"
 # checks are still valid for its own callers. Keeping as-is is safe.
 
 # ------------------------------------------------------------------
-# 7. hook/setuid_hook.c: Add do_umount label + tp_marker.h include
+# 7. hook/setuid_hook.c + syscall_event_bridge.c: Fix setresuid hook
+#    The SUSFS patch changed ksu_handle_setresuid from (old_uid, new_uid)
+#    to (ruid, euid, suid). syscall_event_bridge.c still calls the old API.
 # ------------------------------------------------------------------
-echo "[SUSFS-Fixup] 7/8 hook/setuid_hook.c: Adding do_umount label + tp_marker.h..."
+echo "[SUSFS-Fixup] 7/8 hook/setuid_hook.c: Adding do_umount label + fixing setresuid call..."
 SETUID_HOOK_C="$KSU_KERNEL/hook/setuid_hook.c"
+BRIDGE_C="$KSU_KERNEL/hook/syscall_event_bridge.c"
 
 # Add tp_marker.h include (provides ksu_set_task_tracepoint_flag inline)
 if [ -f "$SETUID_HOOK_C" ] && grep -q "ksu_set_task_tracepoint_flag" "$SETUID_HOOK_C" 2>/dev/null; then
@@ -162,6 +165,19 @@ if [ -f "$SETUID_HOOK_C" ] && grep -q "goto do_umount;" "$SETUID_HOOK_C" 2>/dev/
     if ! grep -q "do_umount:" "$SETUID_HOOK_C" 2>/dev/null; then
         sed -i '/ksu_handle_umount/i\\ndo_umount:' "$SETUID_HOOK_C"
     fi
+fi
+
+# Fix syscall_event_bridge.c: ksu_handle_setresuid call signature
+# SUSFS changed it from (old_uid, new_uid) to (ruid, euid, suid)
+# We update the caller to extract all 3 args from pt_regs
+if [ -f "$BRIDGE_C" ] && grep -q "ksu_handle_setresuid(old_uid, current_uid().val)" "$BRIDGE_C" 2>/dev/null; then
+    echo "[SUSFS-Fixup] Fixing ksu_hook_setresuid in syscall_event_bridge.c..."
+    sed -i 's/ksu_handle_setresuid(old_uid, current_uid()\.val);/{\
+        uid_t ruid = PT_REGS_PARM1(regs);\
+        uid_t euid = PT_REGS_PARM2(regs);\
+        uid_t suid = PT_REGS_PARM3(regs);\
+        ksu_handle_setresuid(ruid, euid, suid);\
+    }/' "$BRIDGE_C"
 fi
 
 # ------------------------------------------------------------------
@@ -250,28 +266,79 @@ if [ -f "$KSUD_INT_C" ] && ! grep -q "ksu_execve_hook_ksud" "$KSUD_INT_C" 2>/dev
     cat >> "$KSUD_INT_C" << 'KSUD_COMPAT_EOF'
 
 /* =================================================================
- * Compatibility wrappers for KernelSU-Next's syscall_event_bridge.c
- * which still calls the old API. These translate old->new signatures.
+ * Compatibility wrapper for KernelSU-Next's syscall_event_bridge.c
+ * which calls ksu_execve_hook_ksud(regs) — the old pt_regs-based API.
+ *
+ * We CANNOT simply wrap the new ksu_handle_execveat_ksud() because:
+ * 1) IS_ERR() on a stack-allocated struct filename returns true on ARM64
+ *    (high kernel addresses look like error pointers), causing silent skip
+ * 2) The SUSFS version sets ksu_execveat_hook=false, but KernelSU-Next
+ *    uses static_branch_disable(&ksud_execve_key) for the hook gate
+ *
+ * Instead, we directly implement the init/zygote detection logic here,
+ * matching what the original KernelSU-Next code did, plus SUSFS init.
  * ================================================================= */
+extern void ksu_stop_ksud_execve_hook(void);
+
 void ksu_execve_hook_ksud(const struct pt_regs *regs)
 {
-    if (!regs)
-        return;
-
-    const char __user *filename_user = (const char __user *)PT_REGS_PARM1(regs);
+    const char __user **filename_user_p = (const char __user **)&PT_REGS_PARM1(regs);
     const char __user *const __user *__argv = (const char __user *const __user *)PT_REGS_PARM2(regs);
     struct user_arg_ptr argv = { .ptr.native = __argv };
-    char path[32];
+    char path[256];
+    long ret;
+    unsigned long addr;
+    const char __user *fn;
 
-    memset(path, 0, sizeof(path));
-    if (strncpy_from_user(path, filename_user, sizeof(path)) <= 0)
+    static const char app_process[] = "/system/bin/app_process";
+    static bool first_zygote = true;
+    static const char system_bin_init[] = "/system/bin/init";
+    static bool init_second_stage_executed = false;
+
+    if (!filename_user_p)
         return;
 
-    // Call the new SUSFS-compatible function with adapted parameters
-    struct filename fname;
-    fname.name = path;
-    struct filename *fname_ptr = &fname;
-    ksu_handle_execveat_ksud(NULL, &fname_ptr, &argv, NULL, NULL);
+    addr = untagged_addr((unsigned long)*filename_user_p);
+    fn = (const char __user *)addr;
+
+    memset(path, 0, sizeof(path));
+    ret = strncpy_from_user(path, fn, sizeof(path) - 1);
+    if (ret <= 0)
+        return;
+
+    /* Detect /system/bin/init second_stage — triggers SELinux rules + cred setup */
+    if (unlikely(!memcmp(path, system_bin_init, sizeof(system_bin_init) - 1) && __argv)) {
+        char buf[16];
+        if (!init_second_stage_executed &&
+            check_argv(argv, 1, "second_stage", buf, sizeof(buf))) {
+            pr_info("/system/bin/init second_stage executed\n");
+            apply_kernelsu_rules();
+            cache_sid();
+            setup_ksu_cred();
+            init_second_stage_executed = true;
+        }
+    }
+
+    /* Detect zygote exec — triggers on_post_fs_data (ksud setup, su binary) */
+    if (unlikely(first_zygote && !memcmp(path, app_process, sizeof(app_process) - 1) && __argv)) {
+        char buf[16];
+        if (check_argv(argv, 1, "-Xzygote", buf, sizeof(buf))) {
+            pr_info("exec zygote, /data prepared, second_stage: %d\n", init_second_stage_executed);
+            on_post_fs_data();
+            first_zygote = false;
+            /* Use the KernelSU-Next mechanism to disable the hook */
+            ksu_stop_ksud_execve_hook();
+        }
+    }
+
+#ifdef CONFIG_KSU_SUSFS
+    /* SUSFS process marking — call ksu_handle_execveat_init if available */
+    {
+        struct filename fname;
+        fname.name = path;
+        (void)ksu_handle_execveat_init(&fname, &argv, NULL);
+    }
+#endif
 }
 
 void ksu_stop_input_hook_runtime(void)

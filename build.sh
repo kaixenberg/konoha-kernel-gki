@@ -1,139 +1,183 @@
 #!/bin/bash
 set -e
 
-# Configuration
-DIR=$(readlink -f .)
-MAIN=$(readlink -f "${DIR}/..")
-KERNEL_DEFCONFIG=konoha_defconfig
-CLANG_DIR="$MAIN/toolchains/clang"
+# ==========================================
+# Konoha Kernel Build Script
+# Usage: ./build.sh [key=value ...]
+#   hz=100|250|1000       Timer frequency (default: 250)
+#   hardened=on|off       CPU mitigations (default: off)
+#   variant=stock|root|susfs  Build variant (default: stock)
+#   root=ksu-next|sukisu|resukisu|mambosu  Root solution (default: ksu-next)
+#   lto=thin|full|none    LTO type (default: thin)
+#   autofdo=on|off        AutoFDO (default: off)
+# ==========================================
+
+# Parse CLI arguments (key=value)
+for arg in "$@"; do
+    case "$arg" in
+        hz=*)       HZ="${arg#*=}" ;;
+        hardened=*) HARDENED="${arg#*=}" ;;
+        variant=*)  VARIANT="${arg#*=}" ;;
+        root=*)     ROOT="${arg#*=}" ;;
+        lto=*)      LTO_TYPE="${arg#*=}" ;;
+        autofdo=*)  AUTOFDO="${arg#*=}" ;;
+    esac
+done
+
+# ==========================================
+# Paths
+# ==========================================
 KERNEL_DIR=$(pwd)
+MAIN=$(readlink -f "$KERNEL_DIR/..")
+CLANG_DIR="$MAIN/toolchains/clang"
 OUT_DIR="$KERNEL_DIR/out"
 ZIMAGE_DIR="$OUT_DIR/arch/arm64/boot"
-DTB_DTBO_DIR="$ZIMAGE_DIR/dts/vendor/qcom"
+MODULES_DIR="$KERNEL_DIR/.root_modules"
 BUILD_START=$(date +"%s")
 
 # ==========================================
-# Interactive Config Setup
+# Interactive Menus (only if not set via CLI/env)
 # ==========================================
-if [ -z "$OPTIMIZATION_PROFILE" ]; then
+
+# 1. Timer Frequency
+if [ -z "$HZ" ]; then
     echo "=========================================="
-    echo "      Select Optimization Profile         "
+    echo "         Select Timer Frequency           "
     echo "=========================================="
-    echo " 1) Balance (250 HZ)"
-    echo " 2) Performance (1000 HZ)"
-    echo " 3) Battery (100 HZ)"
-    read -p "Enter choice [1-3] (default 1): " OPTIMIZATION_PROFILE_CHOICE
-    OPTIMIZATION_PROFILE=${OPTIMIZATION_PROFILE_CHOICE:-1}
+    echo " 1) 100 HZ  (Battery)"
+    echo " 2) 250 HZ  (Balance - default)"
+    echo " 3) 1000 HZ (Performance)"
+    read -p "Enter choice [1-3] (default 2): " _c
+    case "${_c:-2}" in 1) HZ=100 ;; 3) HZ=1000 ;; *) HZ=250 ;; esac
 fi
 
-if [ -z "$BUILD_VARIANT" ]; then
+# 2. Hardened Security
+if [ -z "$HARDENED" ]; then
+    echo "=========================================="
+    echo "         Hardened Security Mode           "
+    echo "=========================================="
+    echo " 1) OFF (default - better performance)"
+    echo " 2) ON  (CPU mitigations enabled)"
+    read -p "Enter choice [1-2] (default 1): " _c
+    [ "${_c:-1}" == "2" ] && HARDENED="on" || HARDENED="off"
+fi
+
+# 3. Build Variant
+if [ -z "$VARIANT" ]; then
     echo "=========================================="
     echo "          Select Build Variant            "
     echo "=========================================="
-    echo " 1) Non-Root (Stock)"
+    echo " 1) Non-Root (Stock - default)"
     echo " 2) Root Only"
     echo " 3) Root + SUSFS"
-    read -p "Enter choice [1-3] (default 1): " BUILD_VARIANT_CHOICE
-    BUILD_VARIANT=${BUILD_VARIANT_CHOICE:-1}
+    read -p "Enter choice [1-3] (default 1): " _c
+    case "${_c:-1}" in 2) VARIANT="root" ;; 3) VARIANT="susfs" ;; *) VARIANT="stock" ;; esac
 fi
 
-if [ "$BUILD_VARIANT" == "2" ] || [ "$BUILD_VARIANT" == "3" ]; then
-    if [ -z "$ROOT_SOLUTION" ]; then
-        echo "=========================================="
-        echo "         Select Root Solution             "
-        echo "=========================================="
-        echo " 1) KernelSU-Next (KernelSU-Next)"
-        echo " 2) Sukisu (sukisu-ultra)"
-        echo " 3) ReSukiSU"
-        echo " 4) MamboSU (RapliVx/KernelSU)"
-        read -p "Enter choice [1-4] (default 1): " ROOT_SOLUTION_CHOICE
-        ROOT_SOLUTION=${ROOT_SOLUTION_CHOICE:-1}
-    fi
-
-    case "$ROOT_SOLUTION" in
-        2) ROOT_REPO="https://github.com/sukisu-ultra/sukisu-ultra.git"; REPO_NAME="sukisu-ultra"; BRANCH="main" ;;
-        3) ROOT_REPO="https://github.com/ReSukiSU/ReSukiSU.git"; REPO_NAME="ReSukiSU"; BRANCH="main" ;;
-        4) ROOT_REPO="https://github.com/RapliVx/KernelSU.git"; REPO_NAME="MamboSU"; BRANCH="master" ;;
-        *) ROOT_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"; REPO_NAME="KernelSU-Next"; BRANCH="dev" ;;
-    esac
-
+# 4. Root Solution (only for root/susfs)
+if [ "$VARIANT" != "stock" ] && [ -z "$ROOT" ]; then
+    echo "=========================================="
+    echo "         Select Root Solution             "
+    echo "=========================================="
+    echo " 1) KernelSU-Next (default)"
+    echo " 2) Sukisu"
+    echo " 3) ReSukiSU"
+    echo " 4) MamboSU"
+    read -p "Enter choice [1-4] (default 1): " _c
+    case "${_c:-1}" in 2) ROOT="sukisu" ;; 3) ROOT="resukisu" ;; 4) ROOT="mambosu" ;; *) ROOT="ksu-next" ;; esac
 fi
 
-# Prepare drivers/kernelsu
+# 5. LTO Type
+if [ -z "$LTO_TYPE" ]; then
+    echo "=========================================="
+    echo "           Select LTO Type                "
+    echo "=========================================="
+    echo " 1) THIN (default - faster build)"
+    echo " 2) FULL (slower, slightly better perf)"
+    echo " 3) NONE (no LTO)"
+    read -p "Enter choice [1-3] (default 1): " _c
+    case "${_c:-1}" in 2) LTO_TYPE="full" ;; 3) LTO_TYPE="none" ;; *) LTO_TYPE="thin" ;; esac
+fi
+
+# ==========================================
+# Resolve Root Solution
+# ==========================================
+case "$ROOT" in
+    sukisu)   ROOT_REPO="https://github.com/sukisu-ultra/sukisu-ultra.git"; REPO_NAME="sukisu-ultra"; BRANCH="main" ;;
+    resukisu) ROOT_REPO="https://github.com/ReSukiSU/ReSukiSU.git"; REPO_NAME="ReSukiSU"; BRANCH="main" ;;
+    mambosu)  ROOT_REPO="https://github.com/RapliVx/KernelSU.git"; REPO_NAME="MamboSU"; BRANCH="master" ;;
+    *)        ROOT_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"; REPO_NAME="KernelSU-Next"; BRANCH="dev"; ROOT="ksu-next" ;;
+esac
+
+# ==========================================
+# Print Config Summary
+# ==========================================
+echo ""
+echo "=========================================="
+echo "          Build Configuration             "
+echo "=========================================="
+echo " Timer:     ${HZ} HZ"
+echo " Hardened:  ${HARDENED^^}"
+[ "$VARIANT" != "stock" ] && echo " Variant:   ${VARIANT} ($REPO_NAME)" || echo " Variant:   stock"
+echo " LTO:       ${LTO_TYPE^^}"
+echo "=========================================="
+echo ""
+
+# ==========================================
+# Prepare Root Module
+# ==========================================
 rm -rf "$KERNEL_DIR/drivers/kernelsu"
-if [ "$BUILD_VARIANT" == "1" ]; then
-    echo "[+] Setting up Non-Root environment..."
+if [ "$VARIANT" == "stock" ]; then
     mkdir -p "$KERNEL_DIR/drivers/kernelsu"
     touch "$KERNEL_DIR/drivers/kernelsu/Kconfig"
     touch "$KERNEL_DIR/drivers/kernelsu/Makefile"
 else
-        # Clone or Update Repo inside the repository
-        MODULES_DIR="$KERNEL_DIR/.root_modules"
-        mkdir -p "$MODULES_DIR"
-        if [ ! -d "$MODULES_DIR/$REPO_NAME" ]; then
-            echo "[+] Cloning $REPO_NAME..."
-            git clone -b "$BRANCH" "$ROOT_REPO" "$MODULES_DIR/$REPO_NAME"
-        else
-            echo "[+] Updating $REPO_NAME..."
-            (cd "$MODULES_DIR/$REPO_NAME" && git reset --hard && git pull || true)
-        fi
-        
-        # Apply SUSFS patches to the module manager backend if Root + SUSFS
-        if [ "$BUILD_VARIANT" == "3" ]; then
-            SUSFS_DIR="$MODULES_DIR/susfs4ksu"
-            if [ ! -d "$SUSFS_DIR" ]; then
-                echo "[+] Cloning susfs4ksu..."
-                git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android15-6.6-dev "$SUSFS_DIR"
-            else
-                echo "[+] Updating susfs4ksu..."
-                (cd "$SUSFS_DIR" && git reset --hard && git pull || true)
-            fi
-            
-            # Detect Root Manager source layout (New layout has "kernel/core" folder)
-            if [ -d "$MODULES_DIR/$REPO_NAME/kernel/core" ]; then
-            	LAYOUT="NEW"
-            else
-            	LAYOUT="OLD"
-            fi
-
-            # Switch to v2.1 based on Layout Compatibility
-            if [ "$LAYOUT" == "OLD" ]; then
-                echo "[+] Switching SUSFS to v2.1 (Legacy Layout Compatible)..."
-                (cd "$SUSFS_DIR" && git reset --hard 89b1422)
-            else
-                echo "[+] Switching SUSFS to v2.1 (Latest/Modern Layout)..."
-                (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
-            fi
-            
-            echo "[+] Injecting SUSFS kernel source files to local tree..."
-            cp "$SUSFS_DIR/kernel_patches/fs/susfs.c" "$KERNEL_DIR/fs/susfs.c"
-            cp "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" "$KERNEL_DIR/include/linux/susfs.h"
-            if [ -f "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" ]; then
-                cp "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" "$KERNEL_DIR/include/linux/susfs_def.h"
-
-            fi
-
-            echo "[+] Applying SUSFS Patches to $REPO_NAME backend..."
-            (cd "$MODULES_DIR/$REPO_NAME" && \
-             patch -p1 --forward -f --reject-file=- < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true)
-            
-            # ============================================================
-            # Apply comprehensive SUSFS v2.1 compatibility fixups
-            # The upstream SUSFS patch targets official KernelSU, not
-            # KernelSU-Next v3.1.0. Run the fixup script to manually
-            # apply all failed hunks adapted for this codebase.
-            # ============================================================
-            echo "[+] Running SUSFS compatibility fixup for KernelSU-Next..."
-            bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel"
-        fi
-
-        echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
-        ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
+    mkdir -p "$MODULES_DIR"
+    if [ ! -d "$MODULES_DIR/$REPO_NAME" ]; then
+        echo "[+] Cloning $REPO_NAME..."
+        git clone -b "$BRANCH" "$ROOT_REPO" "$MODULES_DIR/$REPO_NAME"
+    else
+        echo "[+] Updating $REPO_NAME..."
+        (cd "$MODULES_DIR/$REPO_NAME" && git reset --hard && git pull || true)
     fi
 
-LTO_TYPE="thin" # Options: "thin", "full", or "none" (thin is recommended with AutoFDO)
+    # Apply SUSFS
+    if [ "$VARIANT" == "susfs" ]; then
+        SUSFS_DIR="$MODULES_DIR/susfs4ksu"
+        if [ ! -d "$SUSFS_DIR" ]; then
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android15-6.6-dev "$SUSFS_DIR"
+        else
+            (cd "$SUSFS_DIR" && git reset --hard && git pull || true)
+        fi
 
-# Function to check for existing Clang
+        # Layout detection + SUSFS version
+        if [ -d "$MODULES_DIR/$REPO_NAME/kernel/core" ]; then
+            (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
+        else
+            (cd "$SUSFS_DIR" && git reset --hard 89b1422)
+        fi
+
+        echo "[+] Injecting SUSFS kernel sources..."
+        cp "$SUSFS_DIR/kernel_patches/fs/susfs.c" "$KERNEL_DIR/fs/susfs.c"
+        cp "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" "$KERNEL_DIR/include/linux/susfs.h"
+        [ -f "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" ] && \
+            cp "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" "$KERNEL_DIR/include/linux/susfs_def.h"
+
+        echo "[+] Patching $REPO_NAME for SUSFS..."
+        (cd "$MODULES_DIR/$REPO_NAME" && \
+         patch -p1 --forward -f --reject-file=- < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true)
+
+        echo "[+] Running SUSFS compatibility fixup..."
+        bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel"
+    fi
+
+    echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
+    ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
+fi
+
+# ==========================================
+# Toolchain Setup
+# ==========================================
 check_clang() {
     if [ -n "$CLANG_PATH" ] && [ -f "$CLANG_PATH/bin/clang" ]; then
         export PATH="$CLANG_PATH/bin:$PATH"
@@ -146,290 +190,129 @@ check_clang() {
     else
         return 1
     fi
-
-    # Extracted to prevent quote parsing issues in some editors/shells
     COMPILER_VER=$("$CLANG_BIN" --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')
     export KBUILD_COMPILER_STRING="$COMPILER_VER"
-    echo "Found existing Clang: $KBUILD_COMPILER_STRING"
+    echo "Found Clang: $KBUILD_COMPILER_STRING"
     return 0
 }
 
-# Set up toolchain
-export ARCH=arm64
-export SUBARCH=arm64
+export ARCH=arm64 SUBARCH=arm64
 
-# Clang optimization
 EXTREME_CLANG_FLAGS=(
-    -O2
-    -mcpu=cortex-x4
-    -mtune=cortex-x4
-    # -fsplit-machine-functions (causes ld.lld orphaned section errors 'text.split.*')
-    -mno-fmv
-    -mno-outline-atomics
-    -Wno-all
-    
-    # inline thresholds
-    # -mllvm -inline-threshold=200
-    # -mllvm -unroll-threshold=75
-    # -falign-loops=32
-    # -funroll-loops
-    # -finline-functions
-    -fomit-frame-pointer
-    # functions & vectors
-    # -ffunction-sections (causes ld.lld orphaned section errors in vmlinux)
-    -fslp-vectorize
-    # -fdata-sections // error is being placed in '.init.bss.cmdline.o' section, which is not supported by the current linker script
-    -fmerge-all-constants
-    -fdelete-null-pointer-checks
-    -moutline 
-    # No safeties (Raw Performance)
-    -mharden-sls=none
-    -mbranch-protection=none
-    -fno-semantic-interposition
-    -fno-stack-protector
-    -fno-math-errno
-    -fno-trapping-math
-    -fno-signed-zeros
-    -fassociative-math
-    -freciprocal-math
-    
-
-    # polly flags
-    # -Xclang -load -Xclang LLVMPolly.so
-    # -mllvm -polly
-    # -mllvm -polly-ast-use-context
-    # -mllvm -polly-vectorizer=stripmine
-    # -mllvm -polly-invariant-load-hoisting
-    # -mllvm -polly-enable-simplify
-    # -mllvm -polly-reschedule
-    # -mllvm -polly-postopts
-    # -mllvm -polly-tiling
-    # -mllvm -polly-2nd-level-tiling
-    # -mllvm -polly-register-tiling
-    # -mllvm -polly-pattern-matching-based-opts
-    # -mllvm -polly-matmul-opt
-    # -mllvm -polly-tc-opt
-    # -mllvm -polly-process-unprofitable
+    -O2 -mcpu=cortex-x4 -mtune=cortex-x4 -mno-fmv -mno-outline-atomics -Wno-all
+    -fomit-frame-pointer -fslp-vectorize -fmerge-all-constants -fdelete-null-pointer-checks
+    -moutline -mharden-sls=none -mbranch-protection=none -fno-semantic-interposition
+    -fno-stack-protector -fno-math-errno -fno-trapping-math -fno-signed-zeros
+    -fassociative-math -freciprocal-math
 )
-
 KERNEL_KCFLAGS="-w ${EXTREME_CLANG_FLAGS[*]}"
 KERNEL_LDFLAGS="-O2 --icf=all -mllvm -enable-new-pm=1"
 
+if ! check_clang; then
+    echo "[-] No Clang toolchain found!"
+    exit 1
+fi
+
 # ==========================================
-# Output Setup
+# Kernel Config
 # ==========================================
 mkdir -p "$OUT_DIR"
+make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="$KERNEL_KCFLAGS" LDFLAGS="$KERNEL_LDFLAGS" konoha_defconfig || exit 1
 
-# Create config
-make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="$KERNEL_KCFLAGS" LDFLAGS="$KERNEL_LDFLAGS" $KERNEL_DEFCONFIG || exit 1
+# Root config
+case "$VARIANT" in
+    stock) scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS ;;
+    root)  scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS ;;
+    susfs) scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_MAP ;;
+esac
 
-# Apply Root Configs
-echo "=========================================="
-echo "[+] Applying Root Configuration..."
-echo "=========================================="
-if [ "$BUILD_VARIANT" == "1" ]; then
-    scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS
-elif [ "$BUILD_VARIANT" == "2" ]; then
-    scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS
-elif [ "$BUILD_VARIANT" == "3" ]; then
-    scripts/config --file "$OUT_DIR/.config" \
-        -e CONFIG_KSU \
-        -e CONFIG_KSU_SUSFS \
-        -e CONFIG_KSU_SUSFS_SUS_MAP
-fi
-make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
+# HZ config
+case "$HZ" in
+    100)  scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_1000 -e CONFIG_HZ_100 --set-val CONFIG_HZ 100 -e CONFIG_RCU_LAZY ;;
+    1000) scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_100 -e CONFIG_HZ_1000 --set-val CONFIG_HZ 1000 -d CONFIG_RCU_LAZY ;;
+    *)    scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_1000 -d CONFIG_HZ_100 -e CONFIG_HZ_250 --set-val CONFIG_HZ 250 ;;
+esac
 
-# Apply Optimization Profiles
-echo "=========================================="
-echo "[+] Applying Optimization Profile ($OPTIMIZATION_PROFILE)..."
-echo "=========================================="
-if [ "$OPTIMIZATION_PROFILE" == "1" ]; then
-    # Balance Mode (250 HZ) - Default for Android
-    scripts/config --file "$OUT_DIR/.config"         -d CONFIG_HZ_300         -d CONFIG_HZ_1000         -d CONFIG_HZ_100         -e CONFIG_HZ_250         --set-val CONFIG_HZ 250
-elif [ "$OPTIMIZATION_PROFILE" == "2" ]; then
-    # Performance Mode (1000 HZ)
-    scripts/config --file "$OUT_DIR/.config"         -d CONFIG_HZ_300         -d CONFIG_HZ_250         -d CONFIG_HZ_100         -e CONFIG_HZ_1000         --set-val CONFIG_HZ 1000         -d CONFIG_RCU_LAZY
-elif [ "$OPTIMIZATION_PROFILE" == "3" ]; then
-    # Battery Mode (100 HZ)
-    scripts/config --file "$OUT_DIR/.config"         -d CONFIG_HZ_300         -d CONFIG_HZ_250         -d CONFIG_HZ_1000         -e CONFIG_HZ_100         --set-val CONFIG_HZ 100         -e CONFIG_RCU_LAZY
+# Hardened config
+if [ "$HARDENED" == "off" ]; then
+    scripts/config --file "$OUT_DIR/.config" -d CONFIG_CPU_MITIGATIONS -d CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
 fi
 
-make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
+# LTO config
+case "$LTO_TYPE" in
+    full) scripts/config --file "$OUT_DIR/.config" -d CONFIG_LTO_NONE -d CONFIG_LTO_CLANG_THIN -e CONFIG_LTO_CLANG -e CONFIG_LTO_CLANG_FULL ;;
+    none) scripts/config --file "$OUT_DIR/.config" -d CONFIG_LTO_CLANG -d CONFIG_LTO_CLANG_FULL -d CONFIG_LTO_CLANG_THIN -e CONFIG_LTO_NONE ;;
+    *)    scripts/config --file "$OUT_DIR/.config" -d CONFIG_LTO_NONE -d CONFIG_LTO_CLANG_FULL -e CONFIG_LTO_CLANG -e CONFIG_LTO_CLANG_THIN ;;
+esac
 
-# Apply Global Configs
-if [ "$DISABLE_CPU_MITIGATIONS" = "true" ]; then
-    echo "=========================================="
-    echo "[+] Disabling CPU & Spectre Mitigations..."
-    echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
-        -d CONFIG_CPU_MITIGATIONS \
-        -d CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
-
-    # Re-evaluate config after changes
-    make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
-fi
-
-# Apply LTO Configuration
-if [ "$LTO_TYPE" = "full" ]; then
-    echo "=========================================="
-    echo "[+] Setting LTO Type to FULL..."
-    echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
-        -d CONFIG_LTO_NONE \
-        -d CONFIG_LTO_CLANG_THIN \
-        -e CONFIG_LTO_CLANG \
-        -e CONFIG_LTO_CLANG_FULL
-    make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
-elif [ "$LTO_TYPE" = "thin" ]; then
-    echo "=========================================="
-    echo "[+] Setting LTO Type to THIN..."
-    echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
-        -d CONFIG_LTO_NONE \
-        -d CONFIG_LTO_CLANG_FULL \
-        -e CONFIG_LTO_CLANG \
-        -e CONFIG_LTO_CLANG_THIN
-    make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
-elif [ "$LTO_TYPE" = "none" ]; then
-    echo "=========================================="
-    echo "[+] Disabling LTO..."
-    echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
-        -d CONFIG_LTO_CLANG \
-        -d CONFIG_LTO_CLANG_FULL \
-        -d CONFIG_LTO_CLANG_THIN \
-        -e CONFIG_LTO_NONE
-    make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
-fi
-
-# Apply AutoFDO Configuration
-if [ "$ENABLE_AUTOFDO" = "true" ]; then
-    echo "=========================================="
-    echo "[+] Enabling AutoFDO for Android 15/16..."
-    echo "=========================================="
-    scripts/config --file "$OUT_DIR/.config" \
-        -e CONFIG_AUTOFDO_CLANG
-    make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
-    
+# AutoFDO
+AFDO_PROFILE=""
+if [ "$AUTOFDO" == "on" ]; then
+    scripts/config --file "$OUT_DIR/.config" -e CONFIG_AUTOFDO_CLANG
     AFDO_PROFILE="$KERNEL_DIR/android/gki/aarch64/afdo/kernel.afdo"
-    if [ ! -f "$AFDO_PROFILE" ]; then
-        echo "[-] Error: AutoFDO profile not found at $AFDO_PROFILE!"
-        exit 1
-    fi
-    echo "[+] Found AutoFDO profile at $AFDO_PROFILE!"
+    [ ! -f "$AFDO_PROFILE" ] && { echo "[-] AutoFDO profile not found!"; exit 1; }
 fi
 
-# Reduce debug overhead for production kernel
-# NOTE: Each config was verified against android/abi_gki_aarch64_qcom.
-# CONFIG_SCHED_DEBUG and CONFIG_SLUB_DEBUG are NOT disabled — they export
-# ABI symbols (sched_feat_keys, get_each_object_track, get_slabinfo).
-# CONFIG_KASAN cannot be compiled out — vendor modules depend on
-# kasan_flag_enabled. We disable it at runtime via kasan=off cmdline.
-echo "=========================================="
-echo "[+] Applying debug reduction configs..."
-echo "=========================================="
-scripts/config --file "$OUT_DIR/.config" \
-    -e CONFIG_DEBUG_INFO_REDUCED \
-    -d CONFIG_DEBUG_MISC
-    # -d CONFIG_UBSAN -d CONFIG_UBSAN_BOUNDS -d CONFIG_UBSAN_ARRAY_BOUNDS -d CONFIG_UBSAN_LOCAL_BOUNDS -d CONFIG_UBSAN_SANITIZE_ALL -d CONFIG_UBSAN_TRAP
-    # -d CONFIG_SCHEDSTATS
-    # -d CONFIG_DEBUG_MEMORY_INIT
-    # -d CONFIG_CMA_DEBUGFS
-    # -d CONFIG_BT_DEBUGFS
-    # -d CONFIG_RCU_TRACE
-    # -d CONFIG_PROFILING
-    # -d CONFIG_PRINTK_CALLER
-# Append kasan=off to CMDLINE if not already present
+# Debug reduction (GKI ABI-safe only)
+scripts/config --file "$OUT_DIR/.config" -e CONFIG_DEBUG_INFO_REDUCED -d CONFIG_DEBUG_MISC
+
+# KASAN runtime disable (can't compile out — ABI symbol kasan_flag_enabled)
 CURRENT_CMDLINE=$(grep '^CONFIG_CMDLINE=' "$OUT_DIR/.config" | sed 's/^CONFIG_CMDLINE="//' | sed 's/"$//')
-if ! echo "$CURRENT_CMDLINE" | grep -q "kasan=off"; then
-    scripts/config --file "$OUT_DIR/.config" \
-        --set-str CONFIG_CMDLINE "$CURRENT_CMDLINE kasan=off"
-fi
+echo "$CURRENT_CMDLINE" | grep -q "kasan=off" || \
+    scripts/config --file "$OUT_DIR/.config" --set-str CONFIG_CMDLINE "$CURRENT_CMDLINE kasan=off"
+
+# Single olddefconfig to finalize all changes
 make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
 
-# Build kernel
+# ==========================================
+# Build
+# ==========================================
 CPUS=$(nproc --all)
-echo "[+] Starting build with $CPUS threads..."
 MAKE_ARGS=(
-    "-j${CPUS}"
-    "O=${OUT_DIR}"
-    "CC=clang"
-    "LD=ld.lld"
-    "AR=llvm-ar"
-    "NM=llvm-nm"
-    "OBJCOPY=llvm-objcopy"
-    "OBJDUMP=llvm-objdump"
-    "STRIP=llvm-strip"
-    "LLVM=1"
-    "LLVM_IAS=1"
-    "KCFLAGS=${KERNEL_KCFLAGS}"
-    "LDFLAGS=${KERNEL_LDFLAGS}"
+    "-j${CPUS}" "O=${OUT_DIR}" "CC=clang" "LD=ld.lld" "AR=llvm-ar" "NM=llvm-nm"
+    "OBJCOPY=llvm-objcopy" "OBJDUMP=llvm-objdump" "STRIP=llvm-strip"
+    "LLVM=1" "LLVM_IAS=1" "KCFLAGS=${KERNEL_KCFLAGS}" "LDFLAGS=${KERNEL_LDFLAGS}"
 )
+[ -n "$AFDO_PROFILE" ] && MAKE_ARGS+=("CLANG_AUTOFDO_PROFILE=${AFDO_PROFILE}")
 
-if [ "$ENABLE_AUTOFDO" = "true" ]; then
-    MAKE_ARGS+=("CLANG_AUTOFDO_PROFILE=${AFDO_PROFILE}")
-fi
+echo "[+] Building with ${CPUS} threads..."
+make "${MAKE_ARGS[@]}" || { echo "[-] Build failed!"; exit 1; }
 
-echo "[+] Starting build with ${CPUS} threads..."
-make "${MAKE_ARGS[@]}" || {
-    echo "[-] Build failed!"
-    exit 1
-}
-
-# Clean up old kernel output files
-echo "Cleaning up old kernel files..."
+# ==========================================
+# Package
+# ==========================================
 find "$KERNEL_DIR" -maxdepth 1 -type f -name "Kono-Ha-*.zip" -exec rm -v {} \;
 rm -rf "$KERNEL_DIR/Kono-Ha-Release"
 
-# Create temporary anykernel directory
 TIME=$(date "+%Y%m%d-%H%M%S")
-TEMP_ANY_KERNEL_DIR="$KERNEL_DIR/anykernel_temp"
-rm -rf "$TEMP_ANY_KERNEL_DIR"
+TEMP_DIR="$KERNEL_DIR/anykernel_temp"
+rm -rf "$TEMP_DIR"
 
-# Clone entire anykernel directory
-echo "Cloning anykernel directory..."
-if [ -d "$KERNEL_DIR/anykernel" ]; then
-    cp -r "$KERNEL_DIR/anykernel" "$TEMP_ANY_KERNEL_DIR"
-else
-    echo "Error: anykernel directory not found!"
-    exit 1
-fi
+[ ! -d "$KERNEL_DIR/anykernel" ] && { echo "[-] anykernel directory not found!"; exit 1; }
+cp -r "$KERNEL_DIR/anykernel" "$TEMP_DIR"
 
 # Copy kernel image
-if [ -f "$ZIMAGE_DIR/Image.gz-dtb" ]; then
-    cp -v "$ZIMAGE_DIR/Image.gz-dtb" "$TEMP_ANY_KERNEL_DIR/"
-elif [ -f "$ZIMAGE_DIR/Image.gz" ]; then
-    cp -v "$ZIMAGE_DIR/Image.gz" "$TEMP_ANY_KERNEL_DIR/"
-elif [ -f "$ZIMAGE_DIR/Image" ]; then
-    cp -v "$ZIMAGE_DIR/Image" "$TEMP_ANY_KERNEL_DIR/"
-fi
+for img in Image.gz-dtb Image.gz Image; do
+    [ -f "$ZIMAGE_DIR/$img" ] && { cp -v "$ZIMAGE_DIR/$img" "$TEMP_DIR/"; break; }
+done
 
-# Create zip file in kernel root directory
-echo "Creating zip package..."
+# Build filename
 ZIP_SUFFIX=""
-if [ "$BUILD_VARIANT" == "2" ]; then
-    ZIP_SUFFIX="-$REPO_NAME"
-elif [ "$BUILD_VARIANT" == "3" ]; then
-    ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
-fi
+[ "$VARIANT" == "root" ] && ZIP_SUFFIX="-$REPO_NAME"
+[ "$VARIANT" == "susfs" ] && ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
 
-PROFILE_SUFFIX=""
-if [ "$OPTIMIZATION_PROFILE" == "1" ]; then
-    PROFILE_SUFFIX="-balance"
-elif [ "$OPTIMIZATION_PROFILE" == "2" ]; then
-    PROFILE_SUFFIX="-perf"
-elif [ "$OPTIMIZATION_PROFILE" == "3" ]; then
-    PROFILE_SUFFIX="-battery"
-fi
+HZ_LABEL=""
+case "$HZ" in 100) HZ_LABEL="-battery" ;; 1000) HZ_LABEL="-perf" ;; *) HZ_LABEL="-balance" ;; esac
 
-ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${PROFILE_SUFFIX}-$TIME.zip"
-cd "$TEMP_ANY_KERNEL_DIR"
-# Create zip without top-level folder so it doesn't double-wrap
-zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder > /dev/null
-cd ..
-rm -rf "$TEMP_ANY_KERNEL_DIR"
+ZIP_NAME="Kono-Ha${ZIP_SUFFIX}${HZ_LABEL}-$TIME.zip"
+cd "$TEMP_DIR" && zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder > /dev/null && cd ..
+rm -rf "$TEMP_DIR"
 
-# Set useful variables for GitHub Actions
+# Copy to release dir for CI
+mkdir -p "$KERNEL_DIR/Kono-Ha-Release"
+cp "$KERNEL_DIR/$ZIP_NAME" "$KERNEL_DIR/Kono-Ha-Release/"
+
+# GitHub Actions outputs
 if [ "$GITHUB_ACTIONS" == "true" ]; then
     echo "ZIP_PATH=$KERNEL_DIR/$ZIP_NAME" >> "$GITHUB_ENV"
     echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
@@ -437,8 +320,7 @@ fi
 
 BUILD_END=$(date +"%s")
 DIFF=$((BUILD_END - BUILD_START))
-
 echo -e "\n=========================================="
 echo "Build completed in $((DIFF / 60))m $((DIFF % 60))s"
-echo "Output ready: $KERNEL_DIR/$ZIP_NAME"
+echo "Output: $KERNEL_DIR/$ZIP_NAME"
 echo "=========================================="
