@@ -122,6 +122,14 @@ echo " Timer:     ${HZ} HZ"
 echo " Hardened:  ${HARDENED^^}"
 [ "$VARIANT" != "stock" ] && echo " Variant:   ${VARIANT} ($REPO_NAME)" || echo " Variant:   stock"
 echo " LTO:       ${LTO_TYPE^^}"
+if [ "$VARIANT" != "stock" ]; then
+    _ROOT_COMMIT=$(git -C "$MODULES_DIR/$REPO_NAME" rev-parse --short HEAD 2>/dev/null || echo "n/a")
+    echo " Root:      $REPO_NAME @ $_ROOT_COMMIT"
+fi
+if [ "$VARIANT" == "susfs" ]; then
+    _SUSFS_COMMIT=$(git -C "$MODULES_DIR/susfs4ksu" rev-parse --short HEAD 2>/dev/null || echo "n/a")
+    echo " SUSFS:     susfs4ksu @ $_SUSFS_COMMIT"
+fi
 echo "=========================================="
 echo ""
 
@@ -152,10 +160,8 @@ else
             (cd "$SUSFS_DIR" && git fetch origin && git reset --hard origin/gki-android15-6.6-dev || true)
         fi
 
-        # Always use latest SUSFS kernel sources — the kernel tree's committed hooks
-        # (fs/open.c, fs/stat.c, fs/namei.c, etc.) require the latest susfs_def.h macros
-        # (SUSFS_IS_INODE_OPEN_REDIRECT, etc.) and susfs.c functions that only exist at 6b1badb.
-        (cd "$SUSFS_DIR" && git reset --hard 6b1badb)
+        # Pin to latest stable SUSFS — includes "Fix possible kernel panic" (1450035)
+        (cd "$SUSFS_DIR" && git reset --hard origin/gki-android15-6.6-dev)
 
         echo "[+] Injecting SUSFS kernel sources..."
         cp "$SUSFS_DIR/kernel_patches/fs/susfs.c" "$KERNEL_DIR/fs/susfs.c"
@@ -175,15 +181,16 @@ else
         fi
 
         if grep -q "config KSU_SUSFS" "$MODULES_DIR/$REPO_NAME/kernel/Kconfig" 2>/dev/null; then
-            echo "[+] $REPO_NAME already has native SUSFS integration. Skipping patch and fixup..."
+            echo "[+] $REPO_NAME already has native SUSFS integration. Skipping patch..."
         else
             echo "[+] Patching $REPO_NAME for SUSFS..."
             (cd "$MODULES_DIR/$REPO_NAME" && \
              patch -p1 --forward -f --reject-file=- < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true)
-
-            echo "[+] Running SUSFS compatibility fixup..."
-            bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel"
         fi
+
+        # Always run fixup — repairs partial patch failures and adds missing hooks
+        echo "[+] Running SUSFS compatibility fixup ($ROOT)..."
+        bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel" "$ROOT"
     fi
 
     echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
@@ -340,9 +347,14 @@ DEBUG_REDUCTION_ARGS=(
 scripts/config --file "$OUT_DIR/.config" "${DEBUG_REDUCTION_ARGS[@]}"
 
 # KASAN runtime disable (can't compile out — ABI symbol kasan_flag_enabled)
+# Also override bootloader's panic_on_rcu_stall — SUSFS hooks can trigger
+# scheduling-while-atomic BUGs that cascade into false RCU stalls.
 CURRENT_CMDLINE=$(grep '^CONFIG_CMDLINE=' "$OUT_DIR/.config" | sed 's/^CONFIG_CMDLINE="//' | sed 's/"$//')
-echo "$CURRENT_CMDLINE" | grep -q "kasan=off" || \
-    scripts/config --file "$OUT_DIR/.config" --set-str CONFIG_CMDLINE "$CURRENT_CMDLINE kasan=off"
+CMDLINE_APPEND=""
+echo "$CURRENT_CMDLINE" | grep -q "kasan=off" || CMDLINE_APPEND="$CMDLINE_APPEND kasan=off"
+echo "$CURRENT_CMDLINE" | grep -q "panic_on_rcu_stall" || CMDLINE_APPEND="$CMDLINE_APPEND kernel.panic_on_rcu_stall=0"
+[ -n "$CMDLINE_APPEND" ] && \
+    scripts/config --file "$OUT_DIR/.config" --set-str CONFIG_CMDLINE "$CURRENT_CMDLINE$CMDLINE_APPEND"
 
 # Single olddefconfig to finalize all changes
 make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
