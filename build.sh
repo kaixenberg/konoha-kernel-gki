@@ -106,9 +106,7 @@ if [ "$VARIANT" != "stock" ] && echo "$KPM_SUPPORTED_ROOTS" | grep -qw "$ROOT"; 
         [ "${_c:-1}" == "2" ] && KPM="on" || KPM="off"
     fi
     if [ "$KPM" == "on" ] && [ -z "$KPM_SUPERKEY" ]; then
-        if [ -t 0 ]; then
-            read -p "Enter KPM SuperKey (or leave empty to auto-generate): " KPM_SUPERKEY
-        fi
+        read -p "Enter KPM SuperKey (or leave empty to auto-generate): " KPM_SUPERKEY
         if [ -z "$KPM_SUPERKEY" ]; then
             KPM_SUPERKEY=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 16)
             echo "[+] Auto-generated SuperKey: $KPM_SUPERKEY"
