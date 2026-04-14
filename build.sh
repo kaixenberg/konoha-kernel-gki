@@ -8,8 +8,6 @@ set -e
 #   hardened=on|off       CPU mitigations (default: off)
 #   variant=stock|root|susfs  Build variant (default: stock)
 #   root=ksu-next|sukisu|resukisu|mambosu  Root solution (default: ksu-next)
-#   kpm=on|off            KPM support (default: off, sukisu/resukisu only)
-#   kpm_superkey=STRING   KPM SuperKey (required if kpm=on)
 #   lto=thin|full|none    LTO type (default: thin)
 #   autofdo=on|off        AutoFDO (default: off)
 # ==========================================
@@ -23,8 +21,6 @@ for arg in "$@"; do
         hardened=*) HARDENED="${arg#*=}" ;;
         variant=*)  VARIANT="${arg#*=}" ;;
         root=*)     ROOT="${arg#*=}" ;;
-        kpm=*)      KPM="${arg#*=}" ;;
-        kpm_superkey=*) KPM_SUPERKEY="${arg#*=}" ;;
         lto=*)      LTO_TYPE="${arg#*=}" ;;
         autofdo=*)  AUTOFDO="${arg#*=}" ;;
     esac
@@ -93,32 +89,7 @@ if [ "$VARIANT" != "stock" ] && [ -z "$ROOT" ]; then
     case "${_c:-1}" in 2) ROOT="sukisu" ;; 3) ROOT="resukisu" ;; 4) ROOT="mambosu" ;; *) ROOT="ksu-next" ;; esac
 fi
 
-# 5. KPM (only for sukisu/resukisu)
-KPM_SUPPORTED_ROOTS="sukisu resukisu"
-if [ "$VARIANT" != "stock" ] && echo "$KPM_SUPPORTED_ROOTS" | grep -qw "$ROOT"; then
-    if [ -z "$KPM" ]; then
-        echo "=========================================="
-        echo "        KPM (Kernel Patch Module)         "
-        echo "=========================================="
-        echo " 1) OFF (default - standard root)"
-        echo " 2) ON  (enable KPM module support)"
-        read -p "Enter choice [1-2] (default 1): " _c
-        [ "${_c:-1}" == "2" ] && KPM="on" || KPM="off"
-    fi
-    if [ "$KPM" == "on" ] && [ -z "$KPM_SUPERKEY" ]; then
-        read -p "Enter KPM SuperKey (or leave empty to auto-generate): " KPM_SUPERKEY
-        if [ -z "$KPM_SUPERKEY" ]; then
-            KPM_SUPERKEY=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 16)
-            echo "[+] Auto-generated SuperKey: $KPM_SUPERKEY"
-        fi
-    fi
-else
-    [ "$KPM" == "on" ] && [ "$VARIANT" != "stock" ] && \
-        echo "[!] KPM not supported by $ROOT — forcing off"
-    KPM="off"
-fi
-
-# 6. LTO Type
+# 5. LTO Type
 if [ -z "$LTO_TYPE" ]; then
     echo "=========================================="
     echo "           Select LTO Type                "
@@ -158,10 +129,6 @@ fi
 if [ "$VARIANT" == "susfs" ]; then
     _SUSFS_COMMIT=$(git -C "$MODULES_DIR/susfs4ksu" rev-parse --short HEAD 2>/dev/null || echo "n/a")
     echo " SUSFS:     susfs4ksu @ $_SUSFS_COMMIT"
-fi
-if [ "$KPM" == "on" ]; then
-    echo " KPM:       ENABLED"
-    echo " SuperKey:  ${KPM_SUPERKEY:0:4}****"
 fi
 echo "=========================================="
 echo ""
@@ -228,31 +195,6 @@ else
 
     echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
     ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
-fi
-
-# ==========================================
-# KPM Tools Setup (kptools + kpimg)
-# ==========================================
-if [ "$KPM" == "on" ]; then
-    KPM_TOOLS_DIR="$MODULES_DIR/kpm_tools"
-    KPM_RELEASE_BASE="https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download"
-    mkdir -p "$KPM_TOOLS_DIR"
-
-    KPTOOLS_BIN="$KPM_TOOLS_DIR/kptools-linux"
-    KPIMG_BIN="$KPM_TOOLS_DIR/kpimg"
-
-    if [ ! -f "$KPTOOLS_BIN" ] || [ ! -f "$KPIMG_BIN" ]; then
-        echo "[+] Downloading KPM tools from SukiSU_KernelPatch_patch releases..."
-        curl -LSs -o "$KPTOOLS_BIN" "$KPM_RELEASE_BASE/kptools-linux" || \
-            { echo "[-] Failed to download kptools-linux!"; exit 1; }
-        curl -LSs -o "$KPIMG_BIN" "$KPM_RELEASE_BASE/kpimg" || \
-            { echo "[-] Failed to download kpimg!"; exit 1; }
-    else
-        echo "[+] KPM tools already cached"
-    fi
-
-    chmod +x "$KPTOOLS_BIN"
-    echo "[+] KPM tools ready: $(file -b "$KPTOOLS_BIN" | cut -d, -f1-2)"
 fi
 
 # ==========================================
@@ -347,17 +289,10 @@ make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="$KERNEL_KCFLAGS" LDFLAGS="
 
 # Root config
 case "$VARIANT" in
-    stock) scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS -d CONFIG_KPM ;;
+    stock) scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU -d CONFIG_KSU_SUSFS ;;
     root)  scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS ;;
     susfs) scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_MAP ;;
 esac
-
-# KPM config
-if [ "$KPM" == "on" ]; then
-    scripts/config --file "$OUT_DIR/.config" -e CONFIG_KPM
-else
-    scripts/config --file "$OUT_DIR/.config" -d CONFIG_KPM
-fi
 
 # HZ config
 case "$HZ" in
@@ -439,45 +374,6 @@ echo "[+] Building with ${CPUS} threads..."
 make "${MAKE_ARGS[@]}" || { echo "[-] Build failed!"; exit 1; }
 
 # ==========================================
-# KPM Post-Build Patching
-# ==========================================
-if [ "$KPM" == "on" ]; then
-    echo "=========================================="
-    echo "[+] Patching kernel Image with KernelPatch..."
-    echo "=========================================="
-
-    # kptools operates on the raw (uncompressed) Image
-    RAW_IMAGE="$ZIMAGE_DIR/Image"
-    if [ ! -f "$RAW_IMAGE" ]; then
-        if [ -f "$ZIMAGE_DIR/Image.gz" ]; then
-            echo "[+] Decompressing Image.gz for KPM patching..."
-            gzip -dk "$ZIMAGE_DIR/Image.gz"
-        else
-            echo "[-] No kernel Image found for KPM patching!"; exit 1
-        fi
-    fi
-
-    cp "$RAW_IMAGE" "${RAW_IMAGE}.orig"
-    "$KPTOOLS_BIN" -p -i "${RAW_IMAGE}.orig" -S "$KPM_SUPERKEY" -k "$KPIMG_BIN" -o "$RAW_IMAGE"
-    KPM_RC=$?
-    rm -f "${RAW_IMAGE}.orig"
-
-    if [ $KPM_RC -ne 0 ]; then
-        echo "[-] KPM patching failed (exit code: $KPM_RC)!"
-        exit 1
-    fi
-
-    # Re-compress if the build originally produced Image.gz
-    if [ -f "$ZIMAGE_DIR/Image.gz" ]; then
-        echo "[+] Re-compressing patched Image → Image.gz"
-        gzip -nkf "$RAW_IMAGE"
-    fi
-
-    echo "[+] KPM patching successful"
-    echo "[+] SuperKey: $KPM_SUPERKEY"
-fi
-
-# ==========================================
 # Package
 # ==========================================
 find "$KERNEL_DIR" -maxdepth 1 -type f -name "Kono-Ha-*.zip" -exec rm -v {} \;
@@ -499,7 +395,6 @@ done
 ZIP_SUFFIX=""
 [ "$VARIANT" == "root" ] && ZIP_SUFFIX="-$REPO_NAME"
 [ "$VARIANT" == "susfs" ] && ZIP_SUFFIX="-$REPO_NAME-susfs-v2.1"
-[ "$KPM" == "on" ] && ZIP_SUFFIX="${ZIP_SUFFIX}-kpm"
 
 HZ_LABEL=""
 case "$HZ" in 100) HZ_LABEL="-powersave" ;; 1000) HZ_LABEL="-performance" ;; *) HZ_LABEL="-balance" ;; esac
@@ -516,7 +411,6 @@ cp "$KERNEL_DIR/$ZIP_NAME" "$KERNEL_DIR/Kono-Ha-Release/"
 if [ "$GITHUB_ACTIONS" == "true" ]; then
     echo "ZIP_PATH=$KERNEL_DIR/$ZIP_NAME" >> "$GITHUB_ENV"
     echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-    [ "$KPM" == "on" ] && echo "KPM_SUPERKEY=$KPM_SUPERKEY" >> "$GITHUB_ENV"
 fi
 
 BUILD_END=$(date +"%s")
