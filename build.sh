@@ -226,6 +226,44 @@ else
         bash "$KERNEL_DIR/ksu_susfs_fixup.sh" "$MODULES_DIR/$REPO_NAME/kernel" "$ROOT"
     fi
 
+    # Some forks (e.g. SukiSU-Ultra) keep UAPI headers outside kernel/.
+    # Expose them under kernel/uapi so includes like "uapi/supercall.h" resolve.
+    if [ ! -d "$MODULES_DIR/$REPO_NAME/kernel/uapi" ] && [ -d "$MODULES_DIR/$REPO_NAME/uapi" ]; then
+        ln -sfn ../uapi "$MODULES_DIR/$REPO_NAME/kernel/uapi"
+    fi
+
+    # SukiSU KPM header compatibility:
+    # kpm/kpm.h may include "uapi/supercall.h", which is not in compiler include
+    # search path from kpm/. Rewrite to repo-root relative include when needed.
+    if [ "$ROOT" == "sukisu" ] && [ "$KPM" == "on" ]; then
+        KPM_HEADER="$MODULES_DIR/$REPO_NAME/kernel/kpm/kpm.h"
+        KPM_COMPACT="$MODULES_DIR/$REPO_NAME/kernel/kpm/compact.c"
+        SUPERCALL_UAPI="$MODULES_DIR/$REPO_NAME/uapi/supercall.h"
+        ALLOWLIST_H="$MODULES_DIR/$REPO_NAME/kernel/policy/allowlist.h"
+        KSU_KBUILD="$MODULES_DIR/$REPO_NAME/kernel/Kbuild"
+        if [ -f "$KPM_HEADER" ] && grep -q '#include "uapi/supercall.h"' "$KPM_HEADER" 2>/dev/null; then
+            sed -i 's|#include "uapi/supercall.h"|#include "../../uapi/supercall.h"|' "$KPM_HEADER"
+            echo "[+] Patched SukiSU KPM header include path"
+        fi
+        if [ -f "$SUPERCALL_UAPI" ] && grep -q '#include "uapi/app_profile.h"' "$SUPERCALL_UAPI" 2>/dev/null; then
+            sed -i 's|#include "uapi/app_profile.h"|#include "app_profile.h"|' "$SUPERCALL_UAPI"
+            echo "[+] Patched SukiSU supercall UAPI include path"
+        fi
+        if [ -f "$KPM_COMPACT" ] && grep -q '#include "policy/allowlist.h"' "$KPM_COMPACT" 2>/dev/null; then
+            sed -i 's|#include "policy/allowlist.h"|#include "../policy/allowlist.h"|' "$KPM_COMPACT"
+        fi
+        if [ -f "$KPM_COMPACT" ] && grep -q '#include "manager/manager_identity.h"' "$KPM_COMPACT" 2>/dev/null; then
+            sed -i 's|#include "manager/manager_identity.h"|#include "../manager/manager_identity.h"|' "$KPM_COMPACT"
+        fi
+        if [ -f "$ALLOWLIST_H" ] && grep -q '#include "uapi/app_profile.h"' "$ALLOWLIST_H" 2>/dev/null; then
+            sed -i 's|#include "uapi/app_profile.h"|#include "../uapi/app_profile.h"|' "$ALLOWLIST_H"
+        fi
+        if [ -f "$KSU_KBUILD" ] && ! grep -q '\-I$(KSU_KERNEL_DIR)/\.\.' "$KSU_KBUILD" 2>/dev/null; then
+            sed -i 's|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include -I$(KSU_KERNEL_DIR)/..|' "$KSU_KBUILD"
+        fi
+        [ -f "$KPM_COMPACT" ] && echo "[+] Patched SukiSU KPM compact include paths"
+    fi
+
     echo "[+] Symlinking $REPO_NAME to drivers/kernelsu..."
     ln -sf "$MODULES_DIR/$REPO_NAME/kernel" "$KERNEL_DIR/drivers/kernelsu"
 fi
