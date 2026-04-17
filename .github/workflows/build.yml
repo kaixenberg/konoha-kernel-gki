@@ -17,7 +17,8 @@ jobs:
         hz: 
           - { id: 100, name: powersave }
           - { id: 250, name: balance }
-          - { id: 1000, name: performance }
+          - { id: 500, name: performance }
+          - { id: 1000, name: ultra-performance }
         variant: [stock, root, susfs]
         root: [none, ksu-next, sukisu, resukisu, mambosu]
         kpm: [off, on]

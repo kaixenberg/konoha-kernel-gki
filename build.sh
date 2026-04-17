@@ -54,9 +54,10 @@ if [ -z "$HZ" ]; then
     echo "=========================================="
     echo " 1) 100 HZ  (powersave)"
     echo " 2) 250 HZ  (balance - default)"
-    echo " 3) 1000 HZ (performance)"
-    read -p "Enter choice [1-3] (default 2): " _c
-    case "${_c:-2}" in 1) HZ=100 ;; 3) HZ=1000 ;; *) HZ=250 ;; esac
+    echo " 3) 500 HZ  (performance)"
+    echo " 4) 1000 HZ (ultra-performance)"
+    read -p "Enter choice [1-4] (default 2): " _c
+    case "${_c:-2}" in 1) HZ=100 ;; 3) HZ=500 ;; 4) HZ=1000 ;; *) HZ=250 ;; esac
 fi
 
 # 2. Hardened Security
@@ -415,9 +416,10 @@ fi
 
 # HZ config
 case "$HZ" in
-    100)  scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_1000 -e CONFIG_HZ_100 --set-val CONFIG_HZ 100 -e CONFIG_RCU_LAZY ;;
-    1000) scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_100 -e CONFIG_HZ_1000 --set-val CONFIG_HZ 1000 -d CONFIG_RCU_LAZY ;;
-    *)    scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_1000 -d CONFIG_HZ_100 -e CONFIG_HZ_250 --set-val CONFIG_HZ 250 ;;
+    100)  scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_500 -d CONFIG_HZ_1000 -e CONFIG_HZ_100 --set-val CONFIG_HZ 100 -e CONFIG_RCU_LAZY ;;
+    500)  scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_100 -d CONFIG_HZ_1000 -e CONFIG_HZ_500 --set-val CONFIG_HZ 500 -d CONFIG_RCU_LAZY ;;
+    1000) scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_250 -d CONFIG_HZ_100 -d CONFIG_HZ_500 -e CONFIG_HZ_1000 --set-val CONFIG_HZ 1000 -d CONFIG_RCU_LAZY ;;
+    *)    scripts/config --file "$OUT_DIR/.config" -d CONFIG_HZ_300 -d CONFIG_HZ_1000 -d CONFIG_HZ_100 -d CONFIG_HZ_500 -e CONFIG_HZ_250 --set-val CONFIG_HZ 250 ;;
 esac
 
 # Hardened config
@@ -558,7 +560,7 @@ ZIP_SUFFIX=""
 [ "$KPM" == "on" ] && ZIP_SUFFIX="${ZIP_SUFFIX}-kpm"
 
 HZ_LABEL=""
-case "$HZ" in 100) HZ_LABEL="-powersave" ;; 1000) HZ_LABEL="-performance" ;; *) HZ_LABEL="-balance" ;; esac
+case "$HZ" in 100) HZ_LABEL="-powersave" ;; 500) HZ_LABEL="-performance" ;; 1000) HZ_LABEL="-ultra-performance" ;; *) HZ_LABEL="-balance" ;; esac
 
 ZIP_NAME="Kono-Ha-${VERSION}${ZIP_SUFFIX}${HZ_LABEL}-$TIME.zip"
 cd "$TEMP_DIR" && zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder > /dev/null && cd ..
