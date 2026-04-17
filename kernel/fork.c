@@ -811,6 +811,7 @@ out:
 		dup_userfaultfd_fail(&uf);
 	return retval;
 
+fail_nomem_vmi_store:
 fail_nomem_anon_vma_fork:
 	mpol_put(vma_policy(tmp));
 fail_nomem_policy:
