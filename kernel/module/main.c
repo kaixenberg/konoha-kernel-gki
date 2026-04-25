@@ -2550,6 +2550,48 @@ void flush_module_init_free_work(void)
 static bool async_probe;
 module_param(async_probe, bool, 0644);
 
+#ifdef CONFIG_ARM64
+#include <asm/patching.h>
+
+static void mca_live_patch(struct module *mod)
+{
+	if (!mod || !mod->name)
+		return;
+	
+	if (strcmp(mod->name, "mca_smart_charge") == 0) {
+		void *text = mod->mem[MOD_TEXT].base;
+		if (text) {
+			pr_info("Kono-Ha: Live-patching mca_smart_charge %p\n", text);
+			/* 1. User's original patch for Game Turbo Bypass (smart_bypass) */
+			/* Force jump to bypass continue: b +0x144 (b.lt 2124 -> b 2258) */
+			aarch64_insn_patch_text_nosync(text + 0x2114, 0x14000051);
+
+			/* 2. NEW: Patch for Smart Night to work at any SOC */
+			/* 24cc: b.ge 2538 -> b 2538 (Unconditional jump to enable bypass) */
+			aarch64_insn_patch_text_nosync(text + 0x24cc, 0x1400001b);
+		}
+	} else if (strcmp(mod->name, "mca_strategy_fg_comp") == 0) {
+		void *text = mod->mem[MOD_TEXT].base;
+		if (text) {
+			pr_info("Kono-Ha: Live-patching mca_strategy_fg_comp %p\n", text);
+			/* NOP the b.lt 1c84 check */
+			aarch64_insn_patch_text_nosync(text + 0x1708, 0xd503201f);
+			/* NOP the b.gt 2204 check */
+			aarch64_insn_patch_text_nosync(text + 0x1f78, 0xd503201f);
+		}
+	} else if (strcmp(mod->name, "mca_strategy_quickchg") == 0) {
+		void *text = mod->mem[MOD_TEXT].base;
+		if (text) {
+			pr_info("Live-patching mca_strategy_quickchg %p\n", text);
+			/* NOP the b.gt 2fd4 check */
+			aarch64_insn_patch_text_nosync(text + 0x2db4, 0xd503201f);
+			/* NOP the b.lt 744c check */
+			aarch64_insn_patch_text_nosync(text + 0x7424, 0xd503201f);
+		}
+	}
+}
+#endif
+
 /*
  * This is where the real work happens.
  *
@@ -2571,6 +2613,10 @@ static noinline int do_init_module(struct module *mod)
 				text_size += mod_mem->size;
 		}
 	}
+#endif
+
+#ifdef CONFIG_ARM64
+	mca_live_patch(mod);
 #endif
 
 	freeinit = kmalloc(sizeof(*freeinit), GFP_KERNEL);
