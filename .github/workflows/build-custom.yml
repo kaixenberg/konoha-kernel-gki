@@ -1,0 +1,204 @@
+name: Build Kernel CI (Custom Variant)
+
+on:
+  workflow_dispatch:
+    inputs:
+      hz:
+        description: 'Refresh Rate (HZ)'
+        required: true
+        type: choice
+        options:
+          - powersave
+          - balance
+          - performance
+          - ultra-performance
+        default: ultra-performance
+      variant:
+        description: 'Build Variant'
+        required: true
+        type: choice
+        options:
+          - stock
+          - root
+          - susfs
+        default: susfs
+      root:
+        description: 'Root Method'
+        required: true
+        type: choice
+        options:
+          - none
+          - ksu-next
+          - sukisu
+          - resukisu
+          - mambosu
+        default: resukisu
+      kpm:
+        description: 'Kernel Patch Module (KPM)'
+        required: true
+        type: choice
+        options:
+          - 'off'
+          - 'on'
+        default: 'off'
+      hardened:
+        description: 'Hardened Kernel'
+        required: true
+        type: choice
+        options:
+          - 'off'
+          - 'on'
+        default: 'off'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-custom-kernel:
+    name: "Custom Build"
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Parse Inputs
+        id: setup_vars
+        env:
+          INPUT_HZ: ${{ inputs.hz }}
+          INPUT_VARIANT: ${{ inputs.variant }}
+          INPUT_ROOT: ${{ inputs.root }}
+          INPUT_KPM: ${{ inputs.kpm }}
+          INPUT_HARDENED: ${{ inputs.hardened }}
+        run: |
+          if [ "$INPUT_HZ" == "powersave" ]; then HZ_ID=100
+          elif [ "$INPUT_HZ" == "balance" ]; then HZ_ID=250
+          elif [ "$INPUT_HZ" == "performance" ]; then HZ_ID=500
+          elif [ "$INPUT_HZ" == "ultra-performance" ]; then HZ_ID=1000
+          fi
+          echo "HZ_ID=$HZ_ID" >> $GITHUB_ENV
+
+          ACTUAL_ROOT="$INPUT_ROOT"
+          if [ "$INPUT_VARIANT" == "stock" ]; then
+            ACTUAL_ROOT="none"
+          fi
+          echo "ACTUAL_ROOT=$ACTUAL_ROOT" >> $GITHUB_ENV
+
+          if [ "$INPUT_VARIANT" == "stock" ]; then
+            BUILD_NAME="${INPUT_VARIANT}-${INPUT_HZ}"
+          else
+            BUILD_NAME="${INPUT_VARIANT}-${ACTUAL_ROOT}-${INPUT_HZ}"
+          fi
+          
+          if [ "$INPUT_KPM" == "on" ]; then BUILD_NAME="${BUILD_NAME}-kpm"; fi
+          if [ "$INPUT_HARDENED" == "on" ]; then BUILD_NAME="${BUILD_NAME}-hardened"; fi
+          
+          echo "BUILD_NAME=$BUILD_NAME" >> $GITHUB_ENV
+          
+      - name: Rename Job
+        run: echo "Mengubah nama proses untuk Build $BUILD_NAME"
+
+      - name: Create Swap
+        run: |
+          SWAPFILE="/mnt/build_swapfile"
+          while true; do
+            if sudo fallocate -l 10G $SWAPFILE || sudo dd if=/dev/zero of=$SWAPFILE bs=1M count=10240 status=progress; then
+              break
+            else
+              sleep 5
+            fi
+          done
+          sudo chmod 600 $SWAPFILE && sudo mkswap $SWAPFILE && sudo swapon $SWAPFILE
+
+      - uses: actions/checkout@v4
+        with:
+          path: gki-clo
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm jq
+
+      - name: Download Clang Toolchain
+        run: |
+          mkdir -p toolchains
+          git clone --depth=1 https://github.com/ZyCromerZ/Clang.git -b main toolchains/clang
+
+      - name: Setup AnyKernel3
+        run: |
+          cd gki-clo
+          [ ! -d "anykernel" ] && git clone https://github.com/osm0sis/AnyKernel3.git anykernel || true
+
+      - name: Build Kernel
+        env:
+          KPM_SUPERKEY_SECRET: ${{ secrets.KPM_SUPERKEY }}
+          INPUT_VARIANT: ${{ inputs.variant }}
+          INPUT_KPM: ${{ inputs.kpm }}
+          INPUT_HARDENED: ${{ inputs.hardened }}
+        run: |
+          cd gki-clo
+          chmod +x build.sh
+          
+          KPM_PATCH="on"
+          if [ "$INPUT_KPM" == "on" ] && [ "$ACTUAL_ROOT" == "resukisu" ]; then
+            KPM_PATCH="off"
+          fi
+          
+          LTO_VAL="full"
+          if [ "$INPUT_KPM" == "on" ]; then
+            LTO_VAL="thin"
+          fi
+          
+          KPM_KEY=""
+          if [ "$INPUT_KPM" == "on" ]; then
+            KPM_KEY="$KPM_SUPERKEY_SECRET"
+          fi
+
+          ./build.sh \
+            hz="$HZ_ID" \
+            variant="$INPUT_VARIANT" \
+            root="$ACTUAL_ROOT" \
+            kpm="$INPUT_KPM" \
+            kpm_superkey="$KPM_KEY" \
+            kpm_patch="$KPM_PATCH" \
+            hardened="$INPUT_HARDENED" \
+            lto="$LTO_VAL"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kono-Ha-${{ env.BUILD_NAME }}
+          path: gki-clo/Kono-Ha-Release
+          retention-days: 7
+
+  release:
+    needs: build-custom-kernel
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare assets
+        run: |
+          mkdir -p release_assets
+          find artifacts -type f -name "*.zip" -exec mv {} release_assets/ \; || true
+          find artifacts -type f -name "*.img" -exec mv {} release_assets/ \; || true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: custom-build-${{ github.run_number }}-${{ github.sha }}
+          name: Custom Build ${{ github.sha }}
+          body: |
+            Automated Custom Kernel Build.
+            Variant: **${{ inputs.variant }}**
+            HZ: **${{ inputs.hz }}**
+            Root: **${{ inputs.root }}**
+            KPM: **${{ inputs.kpm }}**
+            Hardened: **${{ inputs.hardened }}**
+            
+            Commit: ${{ github.sha }}
+            Ref: ${{ github.ref }}
+          files: release_assets/*
