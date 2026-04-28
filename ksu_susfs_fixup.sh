@@ -98,6 +98,7 @@ KSU_H="$KSU_KERNEL/include/ksu.h"
 RULES_C="$KSU_KERNEL/selinux/rules.c"
 SELINUX_H="$KSU_KERNEL/selinux/selinux.h"
 SULOG_EVENT_H="$KSU_KERNEL/sulog/event.h"
+KERNEL_UMOUNT_C="$KSU_KERNEL/feature/kernel_umount.c"
 
 echo "[SUSFS-Fixup] Starting compatibility fixups..."
 
@@ -447,7 +448,7 @@ fix_execveat_handlers() {
 
     # Guard old ksu_handle_execve_sucompat with #ifndef CONFIG_KSU_SUSFS
     # (it uses ksu_syscall_table from syscall_hook_manager.c which is not compiled)
-    if grep -q "ksu_handle_execve_sucompat" "$SUCOMPAT_C" 2>/dev/null && \
+    if [ "$MANAGER" != "ksu-next" ] && grep -q "ksu_handle_execve_sucompat" "$SUCOMPAT_C" 2>/dev/null && \
        grep -q "ksu_syscall_table" "$SUCOMPAT_C" 2>/dev/null && \
        ! grep -q '#ifndef CONFIG_KSU_SUSFS' "$SUCOMPAT_C" 2>/dev/null; then
 
@@ -775,6 +776,36 @@ KSUD_COMPAT_EOF
     fi
 }
 
+fix_ksu_next_susfs_umount() {
+    # Inject susfs_set_current_proc_umounted() into setuid_hook.c
+    #
+    # CRITICAL DESIGN: This flag MUST be set at the setuid_hook level, NOT inside
+    # ksu_handle_umount(). The reason is ksu_handle_umount() has multiple early
+    # returns (ksu_module_mounted, ksu_kernel_umount_enabled, ksu_cred) that
+    # prevent the flag from being set when no modules are installed. But SUSFS
+    # map hiding needs the flag regardless of module state.
+    #
+    # The flag must be CONDITIONAL (only for apps needing umount), matching
+    # SukiSU's pattern. If set unconditionally, fs/exec.c's do_execveat_common
+    # hook will skip su handling for ALL apps, breaking root.
+    if [ -f "$SETUID_HOOK_C" ]; then
+        if ! grep -q "susfs_set_current_proc_umounted" "$SETUID_HOOK_C" 2>/dev/null; then
+            sed -i '/ksu_handle_umount(old_uid, new_uid);/a \
+\n#ifdef CONFIG_KSU_SUSFS\
+\t/* Mark apps that need SUSFS hiding (map, mount, etc.).\
+\t * This must be independent of ksu_module_mounted because SUSFS\
+\t * map hiding needs this flag even when no modules are installed.\
+\t * Only set for apps that should be umounted (not root-granted apps). */\
+\tif (is_isolated_process(new_uid) ||\
+\t    (is_appuid(new_uid) \&\& ksu_uid_should_umount(new_uid))) {\
+\t\tsusfs_set_current_proc_umounted();\
+\t}\
+#endif' "$SETUID_HOOK_C"
+            echo "[SUSFS-Fixup] setuid_hook.c: Added conditional susfs_set_current_proc_umounted"
+        fi
+    fi
+}
+
 # ==========================================================================
 # Dispatch per manager
 # ==========================================================================
@@ -790,6 +821,7 @@ case "$MANAGER" in
         fix_ksu_next_supercall
         fix_ksu_next_ksud
         fix_execveat_handlers
+        fix_ksu_next_susfs_umount
         ;;
     *)
         echo "[SUSFS-Fixup] Unknown manager '$MANAGER' — applying best-effort fixes"
