@@ -205,8 +205,9 @@ rebuild_sucompat_h() {
 #include <asm/ptrace.h>
 #include <linux/types.h>
 #include <linux/version.h>
+#include <linux/jump_label.h>
 
-extern bool ksu_su_compat_enabled;
+extern struct static_key_true ksu_su_compat_enabled;
 
 void ksu_sucompat_init(void);
 void ksu_sucompat_exit(void);
