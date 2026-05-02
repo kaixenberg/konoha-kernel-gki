@@ -5574,11 +5574,11 @@ regulator_register(struct device *dev,
 		const char *name;
 		int uV;
 	} pmic_uv_defaults[] = {
-		{ "pmxr2230_l8", 700000 },   { "pmxr2230_l16", 500000 },
+		{ "pmxr2230_l8", 30000 },   { "pmxr2230_l16", 500000 },
 		{ "pmxr2230_l19", 300000 },  { "pm_v6g_s1", 80000 },
 		{ "pmxr2230_l18", 1000000 }, { "pmxr2230_l17", 200000 },
 		{ "pmxr2230_l4", 200000 },   { "pm_v6g_l2", 200000 },
-		{ "pmxr2230_l12", 300000 },  { "pm_v6g_l3", 300000 },
+		{ "pmxr2230_l12", 300000 },  { "pm_v6g_l3", 50000 },
 		{ "pmxr2230_l7", 90000 },    { "pmxr2230_s1", 100000 },
 		{ "pmxr2230_s2", 80000 },    { "pm_v8f_l3", 50000 },
 		{ "pmxr2230_l5", 100000 },   { "pmr_nalojr_l6", 100000 },
@@ -5586,6 +5586,8 @@ regulator_register(struct device *dev,
 		{ "pm_v8f_l1", 800000 },     { "pm_v6g_l1", 1000000 },
 		{ "pmr_nalojr_l1", 500000 }, { "pmr_nalojr_l7", 550000 },
 		{ "pm_v8f_s1_level", 128 },
+		{ "pm_v8f_s8_level", 56 },
+		{ "pmxr2230_s3", 80000 },
 	};
 
 	if (cfg == NULL)
