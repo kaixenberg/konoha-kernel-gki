@@ -2771,6 +2771,91 @@ static void mca_live_patch(struct module *mod)
 			aarch64_insn_patch_text_nosync(text + prof->bc_suspend, prof->bc_suspend_insn);
 	}
 }
+
+/* ========================================================================
+ * KGSL LM_LIMIT Bypass Patch
+ * Dynamically scans msm_kgsl.ko at load time and removes the 10000 limit,
+ * raising it to 65535 to prevent lag during GPU overclocking.
+ * Additionally disables the TrustZone SCM DCVS tuning call to prevent
+ * hardware-level LMh clock clamping on unsupported frequencies.
+ * Finally, spoofs the speed_bin to 0 to unlock firmware constraints.
+ * ======================================================================== */
+static void kgsl_live_patch(struct module *mod)
+{
+	u32 *text;
+	unsigned int text_size;
+	int i;
+	bool patched_lm = false, patched_scm = false, patched_bin = false, patched_soc = false;
+	int patched_dt = 0;
+
+	if (!mod || !mod->name || strcmp(mod->name, "msm_kgsl") != 0)
+		return;
+
+	text = mod->mem[MOD_TEXT].base;
+	text_size = mod->mem[MOD_TEXT].size;
+
+	if (!text || text_size < 16)
+		return;
+
+	for (i = 0; i < (text_size / 4) - 4; i++) {
+		/* Patch LM limit property read (DT hardware limit bypass) */
+		if (text[i] == 0x52800023 &&
+		    text[i+1] == 0xf9418900 &&
+		    text[i+2] == 0xaa1603e2 &&
+		    text[i+3] == 0xaa1f03e4) {
+			pr_info("KGSL bypass: Found DT property read at offset 0x%x. Disabling hardware limit...\n", i * 4);
+			/* Overwrite the 'bl of_property_read_...' with 'mov w0, #-1' */
+			aarch64_insn_patch_text_nosync((void *)&text[i+4], 0x12800000);
+			patched_dt++;
+		}
+
+		/* Patch LM limit software ceiling */
+		if (!patched_lm &&
+		    text[i] == 0xf12ee03f &&
+		    text[i+1] == 0x52817708 &&
+		    text[i+2] == 0x5284e209 &&
+		    text[i+3] == 0x9a888028) {
+			pr_info("KGSL bypass: Found LM limit enforcer at offset 0x%x. Patching to 65535...\n", i * 4);
+			aarch64_insn_patch_text_nosync((void *)&text[i+2], 0x529fffe9);
+			patched_lm = true;
+		}
+
+		/* Patch SCM DCVS Tuning call (TrustZone bypass) */
+		if (!patched_scm &&
+		    text[i] == 0x2a1903e0 &&
+		    text[i+1] == 0x2a1803e1 &&
+		    text[i+2] == 0x2a1703e2) {
+			pr_info("KGSL bypass: Found TrustZone SCM tuning at offset 0x%x. Disabling SCM...\n", i * 4);
+			/* Overwrite the 'bl qcom_scm_kgsl_dcvs_tuning' with 'mov w0, wzr' */
+			aarch64_insn_patch_text_nosync((void *)&text[i+3], 0x2a1f03e0);
+			patched_scm = true;
+		}
+
+		/* Patch GMU Speed Bin (Firmware bypass) */
+		if (!patched_bin &&
+		    text[i] == 0x37f826d8 &&
+		    text[i+1] == 0xb9176a78) {
+			pr_info("KGSL bypass: Found GMU speed_bin assignment at offset 0x%x. Spoofing to 0...\n", i * 4);
+			/* Overwrite 'str w24, [x19, #5992]' with 'str wzr, [x19, #5992]' */
+			aarch64_insn_patch_text_nosync((void *)&text[i+1], 0xb9176a7f);
+			patched_bin = true;
+		}
+
+		/* Patch GMU Soc Code (Firmware bypass) */
+		if (!patched_soc &&
+		    text[i] == 0x33103d16 &&
+		    text[i+1] == 0x71003eff &&
+		    text[i+2] == 0xb9176e76) {
+			pr_info("KGSL bypass: Found GMU soc_code assignment at offset 0x%x. Spoofing to 0...\n", i * 4);
+			/* Overwrite 'str w22, [x19, #5996]' with 'str wzr, [x19, #5996]' */
+			aarch64_insn_patch_text_nosync((void *)&text[i+2], 0xb9176e7f);
+			patched_soc = true;
+		}
+
+		if (patched_lm && patched_scm && patched_bin && patched_soc && patched_dt == 2)
+			break;
+	}
+}
 #endif /* CONFIG_ARM64 */
 #endif /* CONFIG_MCA_BYPASS */
 
@@ -2799,6 +2884,7 @@ static void mca_live_patch(struct module *mod)
 
  #if defined(CONFIG_ARM64) && defined(CONFIG_MCA_BYPASS)
 	mca_live_patch(mod);
+	kgsl_live_patch(mod);
 #endif
 
 	 freeinit = kmalloc(sizeof(*freeinit), GFP_KERNEL);
