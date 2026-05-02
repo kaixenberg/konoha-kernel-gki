@@ -218,7 +218,7 @@ jobs:
               f.write(gen_table('Hardened', hard, False))
               f.write(gen_table('SUSFS ඞ + Hardened', susfs_hard, False))
               
-              f.write("---\n\n## ⚡ Bypass Charging Variants (MCA Override)\n\n")
+              f.write('---\n\n## ⚡ Bypass Charging Variants (MCA Override)\n\n')
               f.write(gen_table('Standard / Root Builds ⚡', std, True))
               f.write(gen_table('SUSFS ඞ ⚡', susfs, True))
               f.write(gen_table('Hardened ⚡', hard, True))

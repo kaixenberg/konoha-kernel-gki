@@ -5578,16 +5578,14 @@ regulator_register(struct device *dev,
 		{ "pmxr2230_l19", 300000 },  { "pm_v6g_s1", 80000 },
 		{ "pmxr2230_l18", 1000000 }, { "pmxr2230_l17", 200000 },
 		{ "pmxr2230_l4", 200000 },   { "pm_v6g_l2", 200000 },
-		{ "pmxr2230_l12", 300000 },  { "pm_v6g_l3", 80000 },
+		{ "pmxr2230_l12", 300000 },  { "pm_v6g_l3", 300000 },
 		{ "pmxr2230_l7", 90000 },    { "pmxr2230_s1", 100000 },
 		{ "pmxr2230_s2", 80000 },    { "pm_v8f_l3", 50000 },
 		{ "pmxr2230_l5", 100000 },   { "pmr_nalojr_l6", 100000 },
 		{ "pmxr2230_l2", 800000 },   { "pmxr2230_l3", 720000 },
 		{ "pm_v8f_l1", 800000 },     { "pm_v6g_l1", 1000000 },
 		{ "pmr_nalojr_l1", 500000 }, { "pmr_nalojr_l7", 550000 },
-		{ "pm_v8f_s1_level", 16 },  { "pm_v8f_s8_level", 16 },
-		{ "pm_v8f_s2_level", 56 },
-		{ "pmxr2230_s3", 90000 },
+		{ "pm_v8f_s1_level", 128 },
 	};
 
 	if (cfg == NULL)
