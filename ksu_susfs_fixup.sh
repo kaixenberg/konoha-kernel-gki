@@ -75,6 +75,9 @@ if [ "$MANAGER" = "resukisu" ]; then
     if [ -f "$KSU_KERNEL/runtime/ksud_integration.c" ]; then
         sed -i 's/ksu_init_rc_hook_key_false/ksu_is_init_rc_hook_enabled/g' "$KSU_KERNEL/runtime/ksud_integration.c"
     fi
+    if [ -f "$(dirname "$0")/fs/susfs.c" ]; then
+        sed -i 's/static void susfs_run_sus_path_loop(void)/void susfs_run_sus_path_loop(void)/g' "$(dirname "$0")/fs/susfs.c"
+    fi
     exit 0
 fi
 
