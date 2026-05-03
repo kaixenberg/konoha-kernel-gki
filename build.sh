@@ -468,7 +468,7 @@ case "$VARIANT" in
     root)  scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU -d CONFIG_KSU_SUSFS ;;
     susfs) 
         scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_MAP
-        if [[ "$ROOT" == *"KernelSU"* ]] || [[ "$ROOT" == *"SukiSU"* ]] || [[ "$ROOT" == "MamboSU" ]]; then
+        if [[ "$ROOT" == *"ksu"* ]] || [[ "$ROOT" == *"sukisu"* ]] || [[ "$ROOT" == "mambosu" ]]; then
             scripts/config --file "$OUT_DIR/.config" -e CONFIG_KSU
         else
             scripts/config --file "$OUT_DIR/.config" -d CONFIG_KSU
