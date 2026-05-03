@@ -36,6 +36,8 @@ detect_manager() {
             sukisu)    echo "sukisu" ;;
             resukisu)  echo "resukisu" ;;
             mambosu)   echo "mambosu" ;;
+            apatch)    echo "apatch" ;;
+            folkpatch) echo "folkpatch" ;;
             *)         echo "unknown" ;;
         esac
         return

@@ -32,6 +32,8 @@ on:
           - sukisu
           - resukisu
           - mambosu
+          - apatch
+          - folkpatch
         default: resukisu
       kpm:
         description: 'Kernel Patch Module (KPM)'
@@ -96,7 +98,9 @@ jobs:
             BUILD_NAME="${INPUT_VARIANT}-${ACTUAL_ROOT}-${INPUT_HZ}"
           fi
           
-          if [ "$INPUT_KPM" == "on" ]; then BUILD_NAME="${BUILD_NAME}-kpm"; fi
+          if [ "$INPUT_KPM" == "on" ] || [ "$ACTUAL_ROOT" == "apatch" ] || [ "$ACTUAL_ROOT" == "folkpatch" ]; then 
+            BUILD_NAME="${BUILD_NAME}-kpm"
+          fi
           if [ "$INPUT_HARDENED" == "on" ]; then BUILD_NAME="${BUILD_NAME}-hardened"; fi
           if [ "$INPUT_BYPASS" == "on" ]; then BUILD_NAME="${BUILD_NAME}-bypasscharging"; fi
           
@@ -153,12 +157,12 @@ jobs:
           fi
           
           LTO_VAL="full"
-          if [ "$INPUT_KPM" == "on" ]; then
+          if [ "$INPUT_KPM" == "on" ] || [ "$ACTUAL_ROOT" == "apatch" ] || [ "$ACTUAL_ROOT" == "folkpatch" ]; then
             LTO_VAL="thin"
           fi
           
           KPM_KEY=""
-          if [ "$INPUT_KPM" == "on" ]; then
+          if [ "$INPUT_KPM" == "on" ] || [ "$ACTUAL_ROOT" == "apatch" ] || [ "$ACTUAL_ROOT" == "folkpatch" ]; then
             KPM_KEY="$KPM_SUPERKEY_SECRET"
           fi
 
