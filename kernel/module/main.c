@@ -2625,85 +2625,13 @@ static struct kprobe kp_mca_vote = {
 };
 
 /* ========================================================================
- * Firmware Profile Lookup Table for Binary Patching
- * ======================================================================== */
-struct mca_patch_profile {
-	const char *scm_version;
-	const char *device_name;
-	/* mca_smart_charge offsets */
-	u32 sc_game_turbo;
-	u32 sc_game_turbo_insn;
-	u32 sc_smart_night;
-	u32 sc_smart_night_insn;
-	u32 sc_bypass_timeout;
-	u32 sc_bypass_timeout_insn;
-	/* mca_strategy_fg_comp offsets */
-	u32 fg_comp_low;
-	u32 fg_comp_high;
-	/* mca_strategy_quickchg offsets */
-	u32 qc_soc_exit;
-	u32 qc_reg_limit;
-	u32 qc_cp_alive;
-	u32 qc_cp_alive_insn;
-	/* mca_strategy_buckchg offsets */
-	u32 bc_stepper;
-	u32 bc_stepper_insn;
-	u32 bc_suspend;
-	u32 bc_suspend_insn;
-};
-
-static const struct mca_patch_profile mca_profiles[] = {
-	{
-		.scm_version = "gec8b9cedb7ab",
-		.device_name = "POCO F7 (Stock Firmware)",
-		.sc_game_turbo = 0x2114,
-		.sc_game_turbo_insn = 0x14000051,
-		.sc_smart_night = 0x24cc,
-		.sc_smart_night_insn = 0x1400001b,
-		.sc_bypass_timeout = 0x086c,
-		.sc_bypass_timeout_insn = 0x1400001a,
-		.fg_comp_low = 0x1708,
-		.fg_comp_high = 0x1f78,
-		.qc_soc_exit = 0x2db4,
-		.qc_reg_limit = 0x7424,
-		.qc_cp_alive = 0x4f64,
-		.qc_cp_alive_insn = 0x14000053,
-		.bc_stepper = 0x6348,
-		.bc_stepper_insn = 0x14000008,
-		.bc_suspend = 0x4a48,
-		.bc_suspend_insn = 0x14000003,
-	},
-	{
-		.scm_version = "g3b0531086a90",
-		.device_name = "POCO F7 Ultra (Stock Firmware)",
-		.sc_game_turbo = 0x2230,
-		.sc_game_turbo_insn = 0x14000009,
-		.sc_smart_night = 0x25f4,
-		.sc_smart_night_insn = 0x14000025,
-		.sc_bypass_timeout = 0x0894,
-		.sc_bypass_timeout_insn = 0x1400001a,
-		.fg_comp_low = 0x1628,
-		.fg_comp_high = 0x1f78,
-		.qc_soc_exit = 0x2ca8,
-		.qc_reg_limit = 0x71c4,
-		.qc_cp_alive = 0x4d14,
-		.qc_cp_alive_insn = 0x14000051,
-		.bc_stepper = 0x61ac,
-		.bc_stepper_insn = 0x14000008,
-		.bc_suspend = 0x48e8,
-		.bc_suspend_insn = 0x14000003,
-	},
-	/* You can append new device/update profiles here in the future */
-};
-
-/* ========================================================================
- * Module Live-Patching Implementation
+ * Dynamic Pattern-Matching Live-Patching Implementation
  * ======================================================================== */
 static void mca_live_patch(struct module *mod)
 {
 	static bool kp_registered = false;
-	const struct mca_patch_profile *prof = NULL;
-	void *text;
+	u32 *text;
+	unsigned int text_size;
 	int i;
 
 	if (!mod || !mod->name)
@@ -2723,52 +2651,120 @@ static void mca_live_patch(struct module *mod)
 		return;
 	}
 
-	if (mod->scmversion) {
-		for (i = 0; i < ARRAY_SIZE(mca_profiles); i++) {
-			if (strcmp(mod->scmversion, mca_profiles[i].scm_version) == 0) {
-				prof = &mca_profiles[i];
-				break;
-			}
-		}
-	}
-
-	if (!prof) {
-		pr_warn("MCA bypass: Unsupported vendor module version (%s) for %s. Binary patching safely disabled.\n",
-			mod->scmversion ? mod->scmversion : "unknown", mod->name);
-		return;
-	}
-
 	text = mod->mem[MOD_TEXT].base;
-	if (!text)
+	text_size = mod->mem[MOD_TEXT].size;
+
+	if (!text || text_size < 32)
 		return;
 
 	if (strcmp(mod->name, "mca_smart_charge") == 0) {
-		if (prof->sc_game_turbo)
-			aarch64_insn_patch_text_nosync(text + prof->sc_game_turbo, prof->sc_game_turbo_insn);
-		if (prof->sc_smart_night)
-			aarch64_insn_patch_text_nosync(text + prof->sc_smart_night, prof->sc_smart_night_insn);
-		if (prof->sc_bypass_timeout)
-			aarch64_insn_patch_text_nosync(text + prof->sc_bypass_timeout, prof->sc_bypass_timeout_insn);
+		bool patched_turbo = false, patched_night = false, patched_timeout = false;
+		for (i = 0; i < (text_size / 4) - 6; i++) {
+			/* sc_game_turbo: b.lt -> b to original b.le target */
+			if (!patched_turbo &&
+			    text[i] == 0xb9424e68 && text[i+1] == 0x6b08001f && (text[i+2] & 0xff00001f) == 0x5400000b &&
+			    text[i+3] == 0xb9425268 && text[i+4] == 0x6b08001f && (text[i+5] & 0xff00001f) == 0x5400000d) {
+				u32 b_le_imm19 = (text[i+5] >> 5) & 0x7ffff;
+				u32 target_offset = b_le_imm19 + 3;
+				aarch64_insn_patch_text_nosync((void *)&text[i+2], 0x14000000 | (target_offset & 0x03ffffff));
+				patched_turbo = true;
+			}
+			/* sc_smart_night: b.ge -> b */
+			if (!patched_night &&
+			    text[i] == 0xb940da68 && text[i+1] == 0x6b08029f && (text[i+2] & 0xff00001f) == 0x5400000a &&
+			    text[i+3] == 0x51001508 && text[i+4] == 0x6b08029f && (text[i+5] & 0xff00001f) == 0x5400000c) {
+				u32 imm19 = (text[i+2] >> 5) & 0x7ffff;
+				aarch64_insn_patch_text_nosync((void *)&text[i+2], 0x14000000 | (imm19 & 0x03ffffff));
+				patched_night = true;
+			}
+			/* sc_bypass_timeout: b.le -> b */
+			if (!patched_timeout &&
+			    text[i] == 0xf9432668 && text[i+1] == 0xf2aa8169 && text[i+2] == 0xf2c00049 &&
+			    text[i+3] == 0x8b090108 && text[i+4] == 0xeb08001f && (text[i+5] & 0xff00001f) == 0x5400000d) {
+				u32 imm19 = (text[i+5] >> 5) & 0x7ffff;
+				aarch64_insn_patch_text_nosync((void *)&text[i+5], 0x14000000 | (imm19 & 0x03ffffff));
+				patched_timeout = true;
+			}
+			if (patched_turbo && patched_night && patched_timeout)
+				break;
+		}
+		pr_info("MCA bypass: mca_smart_charge dynamically patched (turbo:%d night:%d timeout:%d)\n", patched_turbo, patched_night, patched_timeout);
 	}
 	else if (strcmp(mod->name, "mca_strategy_fg_comp") == 0) {
-		if (prof->fg_comp_low)
-			aarch64_insn_patch_text_nosync(text + prof->fg_comp_low, 0xd503201f);
-		if (prof->fg_comp_high)
-			aarch64_insn_patch_text_nosync(text + prof->fg_comp_high, 0xd503201f);
+		bool patched_low = false, patched_high = false;
+		for (i = 0; i < (text_size / 4) - 4; i++) {
+			/* fg_comp_low: b.lt -> nop */
+			if (!patched_low &&
+			    text[i] == 0xb948a268 && text[i+1] == 0x7101691f && (text[i+2] & 0xff00001f) == 0x5400000b &&
+			    text[i+3] == 0x39648268) {
+				aarch64_insn_patch_text_nosync((void *)&text[i+2], 0xd503201f);
+				patched_low = true;
+			}
+			/* fg_comp_high: b.gt -> nop */
+			if (!patched_high &&
+			    text[i] == 0xb948ce68 && text[i+1] == 0x7101411f && (text[i+2] & 0xff00001f) == 0x5400000c &&
+			    text[i+3] == 0x52800020) {
+				aarch64_insn_patch_text_nosync((void *)&text[i+2], 0xd503201f);
+				patched_high = true;
+			}
+			if (patched_low && patched_high)
+				break;
+		}
+		pr_info("MCA bypass: mca_strategy_fg_comp dynamically patched (low:%d high:%d)\n", patched_low, patched_high);
 	}
 	else if (strcmp(mod->name, "mca_strategy_quickchg") == 0) {
-		if (prof->qc_soc_exit)
-			aarch64_insn_patch_text_nosync(text + prof->qc_soc_exit, 0xd503201f);
-		if (prof->qc_reg_limit)
-			aarch64_insn_patch_text_nosync(text + prof->qc_reg_limit, 0xd503201f);
-		if (prof->qc_cp_alive)
-			aarch64_insn_patch_text_nosync(text + prof->qc_cp_alive, prof->qc_cp_alive_insn);
+		bool patched_exit = false, patched_reg = false, patched_alive = false;
+		for (i = 0; i < (text_size / 4) - 6; i++) {
+			/* qc_soc_exit: b.gt -> nop */
+			if (!patched_exit &&
+			    text[i] == 0x7101681f && text[i+1] == 0xb906a660 && (text[i+2] & 0xff00001f) == 0x5400000c &&
+			    text[i+3] == 0xb945f268) {
+				aarch64_insn_patch_text_nosync((void *)&text[i+2], 0xd503201f);
+				patched_exit = true;
+			}
+			/* qc_reg_limit: b.lt -> nop */
+			if (!patched_reg &&
+			    text[i] == 0xb9400368 && text[i+1] == 0x71001d1f && (text[i+2] & 0xff00001f) == 0x54000001 &&
+			    text[i+3] == 0x710142df && (text[i+4] & 0xff00001f) == 0x5400000b) {
+				aarch64_insn_patch_text_nosync((void *)&text[i+4], 0xd503201f);
+				patched_reg = true;
+			}
+			/* qc_cp_alive: tbz -> b */
+			if (!patched_alive &&
+			    text[i] == 0x390013ff && text[i+2] == 0xaa1303e0 && (text[i+4] & 0xff00001f) == 0x36000016 &&
+			    text[i+5] == 0x394013e8) {
+				/* Use fixed skip offset since module layout matches */
+				aarch64_insn_patch_text_nosync((void *)&text[i+4], 0x14000053);
+				patched_alive = true;
+			}
+			if (patched_exit && patched_reg && patched_alive)
+				break;
+		}
+		pr_info("MCA bypass: mca_strategy_quickchg dynamically patched (exit:%d reg:%d alive:%d)\n", patched_exit, patched_reg, patched_alive);
 	}
 	else if (strcmp(mod->name, "mca_strategy_buckchg") == 0) {
-		if (prof->bc_stepper)
-			aarch64_insn_patch_text_nosync(text + prof->bc_stepper, prof->bc_stepper_insn);
-		if (prof->bc_suspend)
-			aarch64_insn_patch_text_nosync(text + prof->bc_suspend, prof->bc_suspend_insn);
+		bool patched_stepper = false, patched_suspend = false;
+		for (i = 0; i < (text_size / 4) - 7; i++) {
+			/* bc_stepper: cbz -> b */
+			if (!patched_stepper &&
+			    text[i] == 0xb940a668 && (text[i+1] & 0xff00001f) == 0x34000008 &&
+			    (text[i+2] & 0xff00001f) == 0x34000014 && text[i+3] == 0xb9415268) {
+				u32 imm19 = (text[i+1] >> 5) & 0x7ffff;
+				aarch64_insn_patch_text_nosync((void *)&text[i+1], 0x14000000 | (imm19 & 0x03ffffff));
+				patched_stepper = true;
+			}
+			/* bc_suspend: b.ne -> b */
+			if (!patched_suspend &&
+			    text[i] == 0x394002a8 && text[i+1] == 0xf9406e60 && text[i+4] == 0x7100291f &&
+			    (text[i+5] & 0xff00001f) == 0x54000001 && text[i+6] == 0x52800022) {
+				u32 imm19 = (text[i+5] >> 5) & 0x7ffff;
+				aarch64_insn_patch_text_nosync((void *)&text[i+5], 0x14000000 | (imm19 & 0x03ffffff));
+				patched_suspend = true;
+			}
+			if (patched_stepper && patched_suspend)
+				break;
+		}
+		pr_info("MCA bypass: mca_strategy_buckchg dynamically patched (stepper:%d suspend:%d)\n", patched_stepper, patched_suspend);
 	}
 }
 
