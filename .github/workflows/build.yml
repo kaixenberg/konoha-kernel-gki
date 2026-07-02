@@ -202,7 +202,7 @@ jobs:
           ]
           
           with open('release_body.md', 'w') as f:
-              f.write('Automated kernel build (Bypass Charging Default).\n')
+              f.write('Automated kernel build (Bypass Charging and NoMount (VFS Redirection)  On by Default).\n')
               f.write(f'Commit: {sha}\n\n')
               f.write('> [!CAUTION]\n> **BACKUP your boot.img** before flashing to recover from potential bootloops or other issues.\n\n')
               f.write(gen_table('Standard Builds ⚡', std, False, False))
