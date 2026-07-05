@@ -374,7 +374,9 @@ EOF
 
     echo "[SUSFS-Fixup] sucompat.h: Rebuilt clean"
 }
-rebuild_sucompat_h
+if [ "$MANAGER" != "resukisu" ]; then
+    rebuild_sucompat_h
+fi
 
 # ==========================================================================
 # [SHARED] sucompat.c — ksu_handle_stat version gate + ksu_handle_execveat_init
