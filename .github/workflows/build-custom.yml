@@ -65,7 +65,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "off"
+        default: "on"
       hardened:
         description: 'Hardened Kernel'
         required: true
