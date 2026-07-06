@@ -7,7 +7,7 @@ on:
         description: "Custom Kernel Name (LOCALVERSION)"
         required: true
         type: string
-        default: "-Kono-Ha-Kernel"
+        default: "-Nidhi-Kernel"
       spoof_uname:
         description: "Spoof Uname (SUSFS/Stock Naming)"
         required: true
@@ -15,7 +15,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "on"
+        default: "off"
       hz:
         description: 'Refresh Rate (HZ)'
         required: true
@@ -25,7 +25,7 @@ on:
           - balance
           - performance
           - ultra-performance
-        default: ultra-performance
+        default: balance
       variant:
         description: 'Build Variant'
         required: true
@@ -65,7 +65,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "on"
+        default: "off"
       hardened:
         description: 'Hardened Kernel'
         required: true
@@ -73,7 +73,7 @@ on:
         options:
           - 'off'
           - 'on'
-        default: 'off'
+        default: 'on'
       bypasscharging:
         description: "Bypass Charging (MCA Override)"
         required: true
@@ -97,7 +97,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "on"
+        default: "off"
       wifi_exploit:
         description: "WiFi Performance Exploits (WLM, Coex, BBR)"
         required: true
@@ -121,7 +121,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "on"
+        default: "off"
       debug:
         description: "Debug Mode (nokaslr, no optimizations)"
         required: true
@@ -134,6 +134,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KBUILD_BUILD_USER: smarajit
+  KBUILD_BUILD_HOST: github
 
 jobs:
   build-custom-kernel:
