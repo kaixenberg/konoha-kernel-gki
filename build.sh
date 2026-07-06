@@ -676,7 +676,7 @@ echo "$CURRENT_CMDLINE" | grep -q "init_on_alloc=" || CMDLINE_APPEND="$CMDLINE_A
 echo "$CURRENT_CMDLINE" | grep -q "page_alloc.shuffle=" || CMDLINE_APPEND="$CMDLINE_APPEND page_alloc.shuffle=0"
 echo "$CURRENT_CMDLINE" | grep -q "randomize_kstack_offset=" || CMDLINE_APPEND="$CMDLINE_APPEND randomize_kstack_offset=0"
 echo "$CURRENT_CMDLINE" | grep -q "loglevel=" || CMDLINE_APPEND="$CMDLINE_APPEND loglevel=0"
-echo "$CURRENT_CMDLINE" | grep -q "sched_pelt_multiplier" || CMDLINE_APPEND="$CMDLINE_APPEND sysctl.kernel.sched_pelt_multiplier=4 kernel.sched_pelt_multiplier=4"
+# echo "$CURRENT_CMDLINE" | grep -q "sched_pelt_multiplier" || CMDLINE_APPEND="$CMDLINE_APPEND sysctl.kernel.sched_pelt_multiplier=4 kernel.sched_pelt_multiplier=4"
 # ⛔ audit=0 — BREAKS SELinux enforcing → bootloop
 # ⛔ nosoftlockup — risky on Qualcomm SoC, vendor drivers may expect watchdog
 
