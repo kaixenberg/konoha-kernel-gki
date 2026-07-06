@@ -313,7 +313,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Nidhi-${{ env.BUILD_NAME }}
-          path: gki-clo/Nidhi-Kernel
+          path: gki-clo/Nidhi-Kernel-*.zip
           retention-days: 7
 
   release:
