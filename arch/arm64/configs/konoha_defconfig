@@ -4,7 +4,7 @@
 CONFIG_INIT_ENV_ARG_LIMIT=32
 # CONFIG_COMPILE_TEST is not set
 CONFIG_WERROR=y
-CONFIG_LOCALVERSION="-Kono-Ha-Kernel"
+CONFIG_LOCALVERSION="-Nidhi-Kernel"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_BUILD_SALT=""
 #
@@ -1140,11 +1140,10 @@ CONFIG_TCP_CONG_CUBIC=y
 CONFIG_TCP_CONG_BBR=y
 # NOTE: BBR as default causes ~2-3s connection delay on mobile networks
 # (aggressive bandwidth probing during initial handshake).
-# Keep BBR compiled-in for per-socket use, but default to CUBIC.
-CONFIG_DEFAULT_CUBIC=y
-# CONFIG_DEFAULT_BBR is not set
+CONFIG_DEFAULT_BBR=y
+# CONFIG_DEFAULT_CUBIC is not set
 # CONFIG_DEFAULT_RENO is not set
-CONFIG_DEFAULT_TCP_CONG="cubic"
+CONFIG_DEFAULT_TCP_CONG="bbr"
 # CONFIG_TCP_MD5SIG is not set
 CONFIG_IPV6=y
 CONFIG_IPV6_ROUTER_PREF=y
