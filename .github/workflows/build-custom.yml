@@ -105,7 +105,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "on"
+        default: "off"
       kgsl_exploit:
         description: "KGSL GPU Bypass (LM_LIMIT, DCVS)"
         required: true
@@ -113,7 +113,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "on"
+        default: "off"
       data_exploit:
         description: "Mobile Data Exploits (DFC, Powersave)"
         required: true
