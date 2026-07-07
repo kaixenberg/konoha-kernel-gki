@@ -752,8 +752,8 @@ fi
 # ==========================================
 # Package
 # ==========================================
-find "$KERNEL_DIR" -maxdepth 1 -type f -name "Kono-Ha-*.zip" -exec rm -v {} \;
-rm -rf "$KERNEL_DIR/Kono-Ha-Release"
+find "$KERNEL_DIR" -maxdepth 1 -type f -name "Nidhi-Kernel-*.zip" -exec rm -v {} \;
+rm -rf "$KERNEL_DIR/Nidhi-Kernel-Release"
 
 TIME=$(date "+%Y%m%d-%H%M%S")
 TEMP_DIR="$KERNEL_DIR/anykernel_temp"
@@ -802,13 +802,13 @@ fi
 HZ_LABEL=""
 case "$HZ" in 100) HZ_LABEL="-powersave" ;; 500) HZ_LABEL="-performance" ;; 1000) HZ_LABEL="-ultra-performance" ;; *) HZ_LABEL="-balance" ;; esac
 
-ZIP_NAME="Kono-Ha-${VERSION}${ZIP_SUFFIX}${HZ_LABEL}-$TIME.zip"
+ZIP_NAME="Nidhi-Kernel-${VERSION}${ZIP_SUFFIX}${HZ_LABEL}-$TIME.zip"
 cd "$TEMP_DIR" && zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder > /dev/null && cd ..
 rm -rf "$TEMP_DIR"
 
 # Copy to release dir for CI
-mkdir -p "$KERNEL_DIR/Kono-Ha-Release"
-cp "$KERNEL_DIR/$ZIP_NAME" "$KERNEL_DIR/Kono-Ha-Release/"
+mkdir -p "$KERNEL_DIR/Nidhi-Kernel-Release"
+cp "$KERNEL_DIR/$ZIP_NAME" "$KERNEL_DIR/Nidhi-Kernel-Release/"
 
 # GitHub Actions outputs
 if [ "$GITHUB_ACTIONS" == "true" ]; then
