@@ -491,8 +491,10 @@ export ARCH=arm64 SUBARCH=arm64
 # Clang optimization
 EXTREME_CLANG_FLAGS=(
     -O2
-    -mcpu=cortex-x4
-    -mtune=cortex-x4
+    # -mcpu=cortex-x4 / -mtune=cortex-x4 removed: unsupported by AOSP clang-r510928
+    # ("clang: error: unsupported argument 'cortex-x4' to option '-mcpu='").
+    # Target ISA/features already come from ARCH=arm64 + defconfig; this was
+    # a scheduler-tuning hint only, not required for correctness.
     # -fsplit-machine-functions (causes ld.lld orphaned section errors 'text.split.*')
     -mno-fmv
     -mno-outline-atomics
