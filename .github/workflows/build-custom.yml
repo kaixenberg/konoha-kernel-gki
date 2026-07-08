@@ -220,14 +220,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm jq libarchive-tools zstd
           
-      - name: Download Clang Toolchain
+      - name: Download Clang Toolchain (AOSP clang-r510928 — Xiaomi's official toolchain)
         run: |
+          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android15-release/clang-r510928.tar.gz"
+          ARCHIVE_NAME="clang.tar.gz"
           mkdir -p toolchains/clang
-          cd toolchains/clang
-          curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
-          chmod +x antman
-          ./antman -S --noconfirm
-          ./antman --patch=glibc --noconfirm
+          wget "$CLANG_URL" -O "$ARCHIVE_NAME" || exit 1
+          tar -xf "$ARCHIVE_NAME" -C toolchains/clang || exit 1
+          rm -f "$ARCHIVE_NAME"
+
+      - name: Verify Clang toolchain
+        run: |
+          if [ ! -f toolchains/clang/bin/clang ]; then
+            echo "[-] clang-r510928 not found after extraction — check archive URL/branch still valid"
+            exit 1
+          fi
+          toolchains/clang/bin/clang --version
           
       - name: Setup AnyKernel3
         run: |
