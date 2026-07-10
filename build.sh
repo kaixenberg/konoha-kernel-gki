@@ -12,6 +12,16 @@ cleanup() {
 trap cleanup EXIT
 
 # ==========================================
+# Ccache Detection
+# ==========================================
+if command -v ccache >/dev/null 2>&1; then
+    export CC_CMD="ccache clang"
+    echo "[+] ccache detected, local builds will be accelerated"
+else
+    export CC_CMD="clang"
+fi
+
+# ==========================================
 # Konoha Kernel Build Script
 # Usage: ./build.sh [key=value ...]
 #   hz=100|250|1000       Timer frequency (default: 250)
@@ -581,7 +591,7 @@ fi
 # Kernel Config
 # ==========================================
 mkdir -p "$OUT_DIR"
-make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 KCFLAGS="$KERNEL_KCFLAGS" LDFLAGS="$KERNEL_LDFLAGS" konoha_defconfig || exit 1
+make O="$OUT_DIR" CC="${CC_CMD}" LLVM=1 LLVM_IAS=1 KCFLAGS="$KERNEL_KCFLAGS" LDFLAGS="$KERNEL_LDFLAGS" konoha_defconfig || exit 1
 
 # Root config
 case "$VARIANT" in
@@ -694,14 +704,14 @@ if [ "$DROIDSPACES" == "on" ]; then
 fi
 
 # Single olddefconfig to finalize all changes
-make O="$OUT_DIR" CC=clang LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
+make O="$OUT_DIR" CC="${CC_CMD}" LLVM=1 LLVM_IAS=1 olddefconfig || exit 1
 
 # ==========================================
 # Build
 # ==========================================
 CPUS=$(nproc --all)
 MAKE_ARGS=(
-    "-j${CPUS}" "O=${OUT_DIR}" "CC=clang" "LD=ld.lld" "AR=llvm-ar" "NM=llvm-nm"
+    "-j${CPUS}" "O=${OUT_DIR}" "CC=${CC_CMD}" "LD=ld.lld" "AR=llvm-ar" "NM=llvm-nm"
     "OBJCOPY=llvm-objcopy" "OBJDUMP=llvm-objdump" "STRIP=llvm-strip"
     "LLVM=1" "LLVM_IAS=1" "KCFLAGS=${KERNEL_KCFLAGS}" "LDFLAGS=${KERNEL_LDFLAGS}"
 )
