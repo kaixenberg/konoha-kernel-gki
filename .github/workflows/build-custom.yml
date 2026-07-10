@@ -32,24 +32,8 @@ on:
         type: choice
         options:
           - stock
-          - root
           - susfs
         default: susfs
-      root:
-        description: 'Root Method'
-        required: true
-        type: choice
-        options:
-          - none
-          - ksu
-          - ksu-next
-          - sukisu
-          - yukisu
-          - resukisu
-          - mambosu
-          - apatch
-          - folkpatch
-        default: resukisu
       kpm:
         description: 'Kernel Patch Module (KPM)'
         required: true
@@ -136,6 +120,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   KBUILD_BUILD_USER: smarajit
   KBUILD_BUILD_HOST: github
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_MAXSIZE: 8G
+  CCACHE_COMPILERCHECK: content
+  CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime
 
 jobs:
   build-custom-kernel:
@@ -148,7 +136,6 @@ jobs:
         env:
           INPUT_HZ: ${{ inputs.hz }}
           INPUT_VARIANT: ${{ inputs.variant }}
-          INPUT_ROOT: ${{ inputs.root }}
           INPUT_KPM: ${{ inputs.kpm }}
           INPUT_NOMOUNT: ${{ inputs.nomount }}
           INPUT_HARDENED: ${{ inputs.hardened }}
@@ -169,7 +156,7 @@ jobs:
           fi
           echo "HZ_ID=$HZ_ID" >> $GITHUB_ENV
 
-          ACTUAL_ROOT="$INPUT_ROOT"
+          ACTUAL_ROOT="resukisu"
           if [ "$INPUT_VARIANT" == "stock" ]; then
             ACTUAL_ROOT="none"
           fi
@@ -181,7 +168,7 @@ jobs:
             BUILD_NAME="${INPUT_VARIANT}-${ACTUAL_ROOT}-${INPUT_HZ}"
           fi
           
-          if [ "$INPUT_KPM" == "on" ] || [ "$ACTUAL_ROOT" == "apatch" ] || [ "$ACTUAL_ROOT" == "folkpatch" ]; then 
+          if [ "$INPUT_KPM" == "on" ]; then 
             BUILD_NAME="${BUILD_NAME}-kpm"
           fi
           if [ "$INPUT_NOMOUNT" == "on" ]; then BUILD_NAME="${BUILD_NAME}-nomount"; fi
@@ -218,9 +205,32 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm jq libarchive-tools zstd
-          
-      - name: Download Clang Toolchain (AOSP clang-r510928 — Xiaomi's official toolchain)
+          sudo apt-get install -y bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf imagemagick \
+            lib32ncurses-dev lib32readline-dev lib32z1-dev libncurses-dev \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
+            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python3 clang lld llvm jq libarchive-tools zstd       
+
+      - name: Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ inputs.variant }}-resukisu-${{ inputs.hardened }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ inputs.variant }}-resukisu-${{ inputs.hardened }}-
+            ccache-${{ inputs.variant }}-resukisu-
+            ccache-${{ inputs.variant }}-
+            ccache-
+
+      - name: Initialize ccache
+        run: |
+          ccache -z
+          ccache -M ${{ env.CCACHE_MAXSIZE }}
+          ccache -o compiler_check=${{ env.CCACHE_COMPILERCHECK }}
+          ccache -o sloppiness=${{ env.CCACHE_SLOPPINESS }}
+
+      - name: Download Clang Toolchain
         run: |
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android15-release/clang-r510928.tar.gz"
           ARCHIVE_NAME="clang.tar.gz"
@@ -280,6 +290,9 @@ jobs:
           INPUT_KERNEL_NAME: ${{ inputs.kernel_name }}
           INPUT_SPOOF_UNAME: ${{ inputs.spoof_uname }}
         run: |
+          # Wrap compiler with ccache
+          export PATH="/usr/lib/ccache:$PATH"
+
           cd gki-clo
           chmod +x build.sh
           
@@ -289,12 +302,12 @@ jobs:
           fi
           
           LTO_VAL="full"
-          if [ "$INPUT_KPM" == "on" ] || [ "$ACTUAL_ROOT" == "apatch" ] || [ "$ACTUAL_ROOT" == "folkpatch" ]; then
+          if [ "$INPUT_KPM" == "on" ]; then
             LTO_VAL="thin"
           fi
           
           KPM_KEY=""
-          if [ "$INPUT_KPM" == "on" ] || [ "$ACTUAL_ROOT" == "apatch" ] || [ "$ACTUAL_ROOT" == "folkpatch" ]; then
+          if [ "$INPUT_KPM" == "on" ]; then
             KPM_KEY="$KPM_SUPERKEY_SECRET"
           fi
 
@@ -316,6 +329,10 @@ jobs:
             kernel_name="$INPUT_KERNEL_NAME" \
             spoof_uname="$INPUT_SPOOF_UNAME" \
             lto="$LTO_VAL"
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -351,7 +368,7 @@ jobs:
             Automated Custom Kernel Build.
             Variant: **${{ inputs.variant }}**
             HZ: **${{ inputs.hz }}**
-            Root: **${{ inputs.root }}**
+            Root: **ReSukiSU** (if variant != stock)
             NoMount VFS: **${{ inputs.nomount }}**
             KPM: **${{ inputs.kpm }}**
             Hardened: **${{ inputs.hardened }}**

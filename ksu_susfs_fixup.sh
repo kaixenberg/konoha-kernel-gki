@@ -123,6 +123,21 @@ if [ -f "$(dirname "$0")/fs/susfs.c" ]; then
 fi
 
 # ==========================================================================
+# [GLOBAL] fs/proc_namespace.c — fix wrong SUSFS symbol type
+# ==========================================================================
+# The 50_add_susfs_in_gki patch may partially fail, leaving proc_namespace.c
+# with "extern bool susfs_hide_sus_mnts_for_non_su_procs" instead of the
+# correct "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled"
+PROC_NS_C="$(dirname "$0")/fs/proc_namespace.c"
+if [ -f "$PROC_NS_C" ] && grep -q "extern bool susfs_hide_sus_mnts_for_non_su_procs" "$PROC_NS_C" 2>/dev/null; then
+    sed -i 's/extern bool susfs_hide_sus_mnts_for_non_su_procs;/extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;/' "$PROC_NS_C"
+    sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_unlikely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' "$PROC_NS_C"
+    echo "[SUSFS-Fixup] proc_namespace.c: Fixed susfs symbol type (bool -> static_key_false)"
+fi
+
+
+
+# ==========================================================================
 # Path Resolution (all supported managers use NEW layout with core/)
 # ==========================================================================
 KBUILD="$KSU_KERNEL/Kbuild"
@@ -368,6 +383,33 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
     void *envp, int *flags);
 #endif
+
+/*
+ * Per-process "unprivillege" flag — used by the non-tracepoint code path
+ * (#ifndef CONFIG_KSU_TRACEPOINT_HOOK) to mark processes that should skip
+ * su-compat checks.  Uses thread_info flag bit 34 (bit 33 is taken by
+ * SUSFS TIF_PROC_UMOUNTED).
+ */
+#ifndef CONFIG_KSU_TRACEPOINT_HOOK
+#include <linux/sched.h>
+#include <linux/thread_info.h>
+#define TIF_KSU_PROC_UNPRIVILLEGE 34
+
+static inline bool ksu_is_current_proc_unprivillege(void)
+{
+	return test_thread_flag(TIF_KSU_PROC_UNPRIVILLEGE);
+}
+
+static inline void ksu_set_current_proc_unprivillege(void)
+{
+	set_thread_flag(TIF_KSU_PROC_UNPRIVILLEGE);
+}
+
+static inline void ksu_clear_current_proc_unprivillege(void)
+{
+	clear_thread_flag(TIF_KSU_PROC_UNPRIVILLEGE);
+}
+#endif /* !CONFIG_KSU_TRACEPOINT_HOOK */
 
 #endif /* __KSU_H_SUCOMPAT */
 EOF
