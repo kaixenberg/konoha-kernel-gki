@@ -97,7 +97,7 @@ on:
         options:
           - "off"
           - "on"
-        default: "off"
+        default: "on"
       data_exploit:
         description: "Mobile Data Exploits (DFC, Powersave)"
         required: true
